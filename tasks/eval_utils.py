@@ -32,11 +32,11 @@ from sklearn.metrics import f1_score
 
 
 def accuracy_metric(predictions, labels, examples):
-    count = 0
     num_predictions = max(len(predictions), 1)
     assert len(predictions) == len(labels)
-    for prediction, label in zip(predictions, labels):
-        count += prediction == label
+    count = sum(
+        prediction == label for prediction, label in zip(predictions, labels)
+    )
     return count * 100.0 / num_predictions
 
 
@@ -87,7 +87,7 @@ def accuracy_func_provider(single_dataset_provider, metric_dict, args, is_test=F
             predictions, labels, examples = eval_func(model, dataloader, example_dict, args)
             elapsed_time = time.time() - start_time
             if output_predictions and torch.distributed.get_rank() == 0:
-                filename = os.path.join(args.log_dir, name + '.jsonl')
+                filename = os.path.join(args.log_dir, f'{name}.jsonl')
                 output_func(predictions, examples, filename)
             total_count = len(predictions)
             single_dict = {key: metric(predictions, labels, examples) for key, metric in metric_dict.items()}
@@ -160,19 +160,18 @@ def multichoice_evaluate(model, dataloader, example_dict, args):
                     logit_list.append(logits)
                 logits = torch.cat(logit_list, dim=1)
             elif args.cloze_eval and args.fast_decode:
-                logit_list = []
                 num_choices = inputs[3].size(1)
+                logit_list = []
                 for i in range((num_choices - 1) // segment_length + 1):
                     input_batch = inputs[:3] + [arg[:, i * segment_length: (i + 1) * segment_length] for arg in
                                                 inputs[3:]]
                     logits, *mems = model(*input_batch)
                     logit_list.append(logits)
                 logits = torch.cat(logit_list, dim=1)
+            elif args.pretrained_bert:
+                logits = model(*inputs)
             else:
-                if args.pretrained_bert:
-                    logits = model(*inputs)
-                else:
-                    logits, *mems = model(*inputs)
+                logits, *mems = model(*inputs)
             if "segment_id" in data:
                 from torch_scatter import scatter_sum
                 if "loss_mask" in data:

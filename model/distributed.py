@@ -28,8 +28,7 @@ class PyTorchDistributedDataParallel(DDP):
         return self.module.named_parameters(prefix=prefix, recurse=recurse)
 
     def state_dict(self, destination=None, prefix='', keep_vars=False):
-        sd = self.module.state_dict(destination, prefix, keep_vars)
-        return sd
+        return self.module.state_dict(destination, prefix, keep_vars)
 
     def load_state_dict(self, state_dict, strict=True):
         return self.module.load_state_dict(state_dict, strict=strict)
@@ -39,7 +38,7 @@ class DistributedDataParallel(Module):
 
     def __init__(self, module):
         super(DistributedDataParallel, self).__init__()
-        self.warn_on_half = True if dist._backend == dist.dist_backend.GLOO else False
+        self.warn_on_half = dist._backend == dist.dist_backend.GLOO
 
         self.module = module
         self.data_parallel_group = mpu.get_data_parallel_group()
@@ -49,34 +48,35 @@ class DistributedDataParallel(Module):
                 dist.broadcast(p, src_rank, group=self.data_parallel_group)
 
         def allreduce_params(reduce_after=True, no_scale=False, fp32_allreduce=False):
-            if (self.needs_reduction):
-                self.needs_reduction = False
-                buckets = {}
-                for name, param in self.module.named_parameters():
-                    if param.requires_grad and param.grad is not None:
-                        tp = (param.data.type())
-                        if tp not in buckets:
-                            buckets[tp] = []
-                        buckets[tp].append(param)
-                if self.warn_on_half:
-                    if torch.cuda.HalfTensor in buckets:
-                        print("WARNING: gloo dist backend for half parameters may be extremely slow." +
-                              " It is recommended to use the NCCL backend in this case.")
-                        self.warn_on_half = False
-                for tp in buckets:
-                    bucket = buckets[tp]
-                    grads = [param.grad.data for param in bucket]
-                    coalesced = _flatten_dense_tensors(grads)
-                    if fp32_allreduce:
-                        coalesced = coalesced.float()
-                    if not no_scale and not reduce_after:
-                        coalesced /= dist.get_world_size(group=self.data_parallel_group)
-                    dist.all_reduce(coalesced, group=self.data_parallel_group)
-                    torch.cuda.synchronize()
-                    if not no_scale and reduce_after:
-                        coalesced /= dist.get_world_size(group=self.data_parallel_group)
-                    for buf, synced in zip(grads, _unflatten_dense_tensors(coalesced, grads)):
-                        buf.copy_(synced)
+            if not self.needs_reduction:
+                return
+            self.needs_reduction = False
+            buckets = {}
+            for name, param in self.module.named_parameters():
+                if param.requires_grad and param.grad is not None:
+                    tp = (param.data.type())
+                    if tp not in buckets:
+                        buckets[tp] = []
+                    buckets[tp].append(param)
+            if self.warn_on_half:
+                if torch.cuda.HalfTensor in buckets:
+                    print("WARNING: gloo dist backend for half parameters may be extremely slow." +
+                          " It is recommended to use the NCCL backend in this case.")
+                    self.warn_on_half = False
+            for tp in buckets:
+                bucket = buckets[tp]
+                grads = [param.grad.data for param in bucket]
+                coalesced = _flatten_dense_tensors(grads)
+                if fp32_allreduce:
+                    coalesced = coalesced.float()
+                if not no_scale and not reduce_after:
+                    coalesced /= dist.get_world_size(group=self.data_parallel_group)
+                dist.all_reduce(coalesced, group=self.data_parallel_group)
+                torch.cuda.synchronize()
+                if not no_scale and reduce_after:
+                    coalesced /= dist.get_world_size(group=self.data_parallel_group)
+                for buf, synced in zip(grads, _unflatten_dense_tensors(coalesced, grads)):
+                    buf.copy_(synced)
 
         self.hook_handles = []
         self.hooks = []
@@ -93,9 +93,7 @@ class DistributedDataParallel(Module):
         return self.module(*inputs, **kwargs)
 
     def state_dict(self, destination=None, prefix='', keep_vars=False):
-        # [h.remove() for h in self.hook_handles]
-        sd = self.module.state_dict(destination, prefix, keep_vars)
-        return sd
+        return self.module.state_dict(destination, prefix, keep_vars)
 
     def load_state_dict(self, state_dict, strict=True):
         return self.module.load_state_dict(state_dict, strict=strict)

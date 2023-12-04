@@ -227,8 +227,8 @@ class BeamSearchScorer(BeamScorer):
         for batch_idx, beam_hyp in enumerate(self._beam_hyps):
             if self._done[batch_idx]:
                 assert (
-                        len(beam_hyp) >= self.num_beams
-                ), "Batch can only be done if at least {} beams have been generated".format(self.num_beams)
+                    len(beam_hyp) >= self.num_beams
+                ), f"Batch can only be done if at least {self.num_beams} beams have been generated"
                 assert (
                         eos_token_id is not None and pad_token_id is not None
                 ), "generated beams >= num_beams -> eos_token_id and pad_token have to be defined"
@@ -385,8 +385,7 @@ class BeamHypotheses:
             return True
         else:
             cur_score = best_sum_logprobs / cur_len ** self.length_penalty
-            ret = self.worst_score >= cur_score
-            return ret
+            return self.worst_score >= cur_score
 
 
 class LogitsProcessor(ABC):

@@ -189,8 +189,6 @@ class PVP(ABC):
                     x = tokenizer.EncodeAsIds(x)
                 elif isinstance(x, int):
                     x = [prompt_id] * x
-                else:
-                    pass
                 parts.append((x, s))
             return parts
 
@@ -328,7 +326,15 @@ class PVP(ABC):
 
     @staticmethod
     def _seq_length(parts: List[Tuple[List[int], bool]], only_shortenable: bool = False):
-        return sum([len(x) for x, shortenable in parts if not only_shortenable or shortenable]) if parts else 0
+        return (
+            sum(
+                len(x)
+                for x, shortenable in parts
+                if not only_shortenable or shortenable
+            )
+            if parts
+            else 0
+        )
 
     @staticmethod
     def _remove_last(parts: List[Tuple[List[int], bool]]):
@@ -447,22 +453,30 @@ class CopaPVP(PVP):
 
     def get_parts(self, example: InputExample) -> FilledPattern:
         assert self.pattern_id in [0, 1, 2, 3]
-        premise = self.remove_final_punc(self.shortenable(" " + example.text_a))
+        premise = self.remove_final_punc(self.shortenable(f" {example.text_a}"))
         choice1 = self.remove_final_punc(self.lowercase_first(example.meta['choice1']))
         choice2 = self.remove_final_punc(self.lowercase_first(example.meta['choice2']))
 
         question = example.meta['question']
         assert question in ['cause', 'effect']
-        if question == 'cause':
-            joiner = ' because'
-        else:
-            joiner = ', so'
+        joiner = ' because' if question == 'cause' else ', so'
         if self.pattern_id == 0:
             parts_a, parts_b = [None, '"', choice1, '" or "', choice2, '"?', None, premise, joiner, None, [self.mask],
                                 '.'], []
         elif self.pattern_id == 1:
-            parts_a, parts_b = [None, choice1, ' or', " " + choice2, '?', None, premise, joiner, None, [self.mask],
-                                '.'], []
+            parts_a, parts_b = [
+                None,
+                choice1,
+                ' or',
+                f" {choice2}",
+                '?',
+                None,
+                premise,
+                joiner,
+                None,
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id == 2:
             parts_a, parts_b = [None, '"', choice1, '" or "', choice2, '"', None, premise, joiner, [self.mask], '.',
                                 None], []
@@ -516,14 +530,16 @@ class CopaPVP(PVP):
             sep_list.append(sep)
             target_list.append(target_ids)
             mask_list.append(loss_masks)
-        if example.label is not None:
-            label = self.label_list.index(example.label)
-        else:
-            label = 0
-        sample = build_sample(ids_list, positions=positions_list, masks=sep_list, label=label,
-                              logit_mask=mask_list, target=target_list,
-                              unique_id=example.guid)
-        return sample
+        label = 0 if example.label is None else self.label_list.index(example.label)
+        return build_sample(
+            ids_list,
+            positions=positions_list,
+            masks=sep_list,
+            label=label,
+            logit_mask=mask_list,
+            target=target_list,
+            unique_id=example.guid,
+        )
 
 
 class WscPVP(PVP):
@@ -547,7 +563,7 @@ class WscPVP(PVP):
             # if len(candidates) > 10:
             #     random.shuffle(candidates)
             #     candidates = candidates[:10]
-            answers += [" " + cand for cand in candidates]
+            answers += [f" {cand}" for cand in candidates]
         return answers
 
     def get_parts(self, example: InputExample) -> FilledPattern:
@@ -555,22 +571,41 @@ class WscPVP(PVP):
         pronoun_idx = example.meta['span2_index']
 
         words_a = example.text_a.split()
-        words_a[pronoun_idx] = '*' + words_a[pronoun_idx] + '*'
+        words_a[pronoun_idx] = f'*{words_a[pronoun_idx]}*'
         text_a = ' '.join(words_a)
         text_a = self.shortenable(text_a)
 
         if self.pattern_id == 0:
-            parts_a, parts_b = [None, text_a, None, " The pronoun '*" + pronoun + "*' refers to", None, [self.mask],
-                                '.'], []
+            parts_a, parts_b = [
+                None,
+                text_a,
+                None,
+                f" The pronoun '*{pronoun}*' refers to",
+                None,
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id == 1:
-            parts_a, parts_b = [None, text_a, None,
-                                " In the previous sentence, the pronoun '*" + pronoun + "*' refers to", None,
-                                [self.mask], '.'], []
+            parts_a, parts_b = [
+                None,
+                text_a,
+                None,
+                f" In the previous sentence, the pronoun '*{pronoun}*' refers to",
+                None,
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id == 2:
-            parts_a, parts_b = [None, text_a, None,
-                                " Question: In the passage above, what does the pronoun '*" + pronoun + "*' refer to?",
-                                None,
-                                " Answer:", [self.mask], '.'], []
+            parts_a, parts_b = [
+                None,
+                text_a,
+                None,
+                f" Question: In the passage above, what does the pronoun '*{pronoun}*' refer to?",
+                None,
+                " Answer:",
+                [self.mask],
+                '.',
+            ], []
         else:
             raise NotImplementedError(self.pattern_id)
         parts_a, parts_b = self.replace_prompt_tokens(parts_a, parts_b)
@@ -607,8 +642,6 @@ class WscPVP(PVP):
                     x = tokenizer.EncodeAsIds(x)
                 elif isinstance(x, int):
                     x = [prompt_id] * x
-                else:
-                    pass
                 parts.append((x, s))
             return parts
 
@@ -650,15 +683,14 @@ class RecordPVP(PVP):
 
     def get_answers(self, example: InputExample):
         choices = example.meta['candidates']
-        choices = [" " + choice for choice in choices]
-        return choices
+        return [f" {choice}" for choice in choices]
 
     def get_parts(self, example: InputExample) -> FilledPattern:
         premise = self.shortenable(example.text_a)
 
         assert '@placeholder' in example.text_b, f'question "{example.text_b}" does not contain a @placeholder token'
         question_a, question_b = example.text_b.split('@placeholder')
-        return [premise, " " + question_a.rstrip(), [self.mask], question_b], []
+        return [premise, f" {question_a.rstrip()}", [self.mask], question_b], []
 
     def verbalize(self, label) -> List[str]:
         return []
@@ -675,29 +707,42 @@ class RacePVP(PVP):
 
     def get_answers(self, example: InputExample):
         choices = example.meta['choices']
-        choices = [" " + choice for choice in choices]
-        return choices
+        return [f" {choice}" for choice in choices]
 
     def get_parts(self, example: InputExample) -> FilledPattern:
         context = self.shortenable(example.text_a)
-        question = " " + example.text_b
+        question = f" {example.text_b}"
 
-        if "_" in question:
-            left, right = question.split('_', maxsplit=1)
-            if self.pattern_id == 0:
-                return [context], [self.shortenable(left.rstrip()), [self.mask], self.shortenable(right)]
-            else:
-                left = left.rstrip()
-                if left:
-                    left = self.lowercase_first(left)
-                return [context], [" Based on the previous passage,",
-                                   self.shortenable(left), [self.mask],
-                                   self.shortenable(right)]
-        else:
-            if self.pattern_id == 0:
-                return [context], [" Question:", self.shortenable(question), " Answer:", [self.mask]]
-            else:
-                return [context], [" Based on the previous passage,", self.shortenable(question), [self.mask]]
+        if "_" not in question:
+            return (
+                (
+                    [context],
+                    [
+                        " Question:",
+                        self.shortenable(question),
+                        " Answer:",
+                        [self.mask],
+                    ],
+                )
+                if self.pattern_id == 0
+                else (
+                    [context],
+                    [
+                        " Based on the previous passage,",
+                        self.shortenable(question),
+                        [self.mask],
+                    ],
+                )
+            )
+        left, right = question.split('_', maxsplit=1)
+        if self.pattern_id == 0:
+            return [context], [self.shortenable(left.rstrip()), [self.mask], self.shortenable(right)]
+        left = left.rstrip()
+        if left:
+            left = self.lowercase_first(left)
+        return [context], [" Based on the previous passage,",
+                           self.shortenable(left), [self.mask],
+                           self.shortenable(right)]
 
     def verbalize(self, label) -> List[str]:
         return []
@@ -725,17 +770,36 @@ class RtePVP(PVP):
             parts_a, parts_b = [None, '"', self.shortenable(text_b), '" ?'], [None, [self.mask], ',', None, ' "',
                                                                               self.shortenable(text_a), '"']
         elif self.pattern_id == 1:
-            parts_a, parts_b = [None, self.shortenable(text_b), '?'], [None, [self.mask], ',', None,
-                                                                       self.shortenable(" " + text_a)]
+            parts_a, parts_b = [None, self.shortenable(text_b), '?'], [
+                None,
+                [self.mask],
+                ',',
+                None,
+                self.shortenable(f" {text_a}"),
+            ]
         elif self.pattern_id == 2:
             parts_a, parts_b = [None, '"', self.shortenable(text_b), '" ?'], [None, [self.mask], '. "', None,
                                                                               self.shortenable(text_a), '"']
         elif self.pattern_id == 3:
-            parts_a, parts_b = [None, self.shortenable(text_b), '?'], [None, [self.mask], '.', None,
-                                                                       self.shortenable(" " + text_a)]
+            parts_a, parts_b = [None, self.shortenable(text_b), '?'], [
+                None,
+                [self.mask],
+                '.',
+                None,
+                self.shortenable(f" {text_a}"),
+            ]
         elif self.pattern_id == 4:
-            parts_a, parts_b = [None, self.shortenable(text_a), None, ' question:', self.shortenable(" " + text_b),
-                                ' True or False?', None, ' answer:', [self.mask]], []
+            parts_a, parts_b = [
+                None,
+                self.shortenable(text_a),
+                None,
+                ' question:',
+                self.shortenable(f" {text_b}"),
+                ' True or False?',
+                None,
+                ' answer:',
+                [self.mask],
+            ], []
         else:
             raise NotImplementedError(self.pattern_id)
         parts_a, parts_b = self.replace_prompt_tokens(parts_a, parts_b)
@@ -761,7 +825,7 @@ class CbPVP(RtePVP):
     def get_parts(self, example: InputExample) -> FilledPattern:
         if self.pattern_id == 4:
             text_a = self.shortenable(example.text_a)
-            text_b = self.shortenable(" " + example.text_b)
+            text_b = self.shortenable(f" {example.text_b}")
             parts_a, parts_b = [None, text_a, None, ' question:', text_b, ' true, false or neither?', None, ' answer:',
                                 [self.mask]], []
             parts_a, parts_b = self.replace_prompt_tokens(parts_a, parts_b)
@@ -798,21 +862,48 @@ class BoolQPVP(PVP):
         question = example.text_b
 
         if self.pattern_id < 2:
-            parts_a, parts_b = [None, self.shortenable(passage), None, ' Question:', self.shortenable(" " + question),
-                                '? Answer:', None, [self.mask], '.'], []
+            parts_a, parts_b = [
+                None,
+                self.shortenable(passage),
+                None,
+                ' Question:',
+                self.shortenable(f" {question}"),
+                '? Answer:',
+                None,
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id < 4:
-            parts_a, parts_b = [None, self.shortenable(passage), ' Based on the previous passage,', None,
-                                self.shortenable(" " + question), '?', None, [self.mask], '.'], []
+            parts_a, parts_b = [
+                None,
+                self.shortenable(passage),
+                ' Based on the previous passage,',
+                None,
+                self.shortenable(f" {question}"),
+                '?',
+                None,
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id < 6:
-            parts_a, parts_b = ['Based on the following passage', None, self.shortenable(" " + question), '?', None,
-                                [self.mask], '.', None, self.shortenable(" " + passage)], []
+            parts_a, parts_b = [
+                'Based on the following passage',
+                None,
+                self.shortenable(f" {question}"),
+                '?',
+                None,
+                [self.mask],
+                '.',
+                None,
+                self.shortenable(f" {passage}"),
+            ], []
         else:
             raise NotImplementedError(self.pattern_id)
         parts_a, parts_b = self.replace_prompt_tokens(parts_a, parts_b)
         return parts_a, parts_b
 
     def verbalize(self, label) -> List[str]:
-        if self.pattern_id == 0 or self.pattern_id == 2 or self.pattern_id == 4:
+        if self.pattern_id in [0, 2, 4]:
             return BoolQPVP.VERBALIZER_A[label]
         else:
             return BoolQPVP.VERBALIZER_B[label]
@@ -837,19 +928,78 @@ class MultiRcPVP(PVP):
         question = self.remove_final_punc(example.text_b.rstrip())
         answer = example.meta['answer']
         if self.pattern_id == 0:
-            parts_a, parts_b = [passage, '.', None, ' Question:', " " + question + '?', None, ' Is it', " " + answer,
-                                '?', None, [self.mask], '.'], []
+            parts_a, parts_b = [
+                passage,
+                '.',
+                None,
+                ' Question:',
+                f" {question}?",
+                None,
+                ' Is it',
+                f" {answer}",
+                '?',
+                None,
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id == 1:
-            parts_a, parts_b = [passage, '.', None, ' Question:', " " + question, '?', None, ' Is the correct answer "',
-                                answer, '"?', None, [self.mask], '.'], []
+            parts_a, parts_b = [
+                passage,
+                '.',
+                None,
+                ' Question:',
+                f" {question}",
+                '?',
+                None,
+                ' Is the correct answer "',
+                answer,
+                '"?',
+                None,
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id == 2:
-            parts_a, parts_b = [passage, '. Based on the previous passage,', None, " " + question, '?', None, ' Is "',
-                                answer, '" a correct answer?', None, [self.mask], '.'], []
+            parts_a, parts_b = [
+                passage,
+                '. Based on the previous passage,',
+                None,
+                f" {question}",
+                '?',
+                None,
+                ' Is "',
+                answer,
+                '" a correct answer?',
+                None,
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id == 3:
-            parts_a, parts_b = [None, passage, None, " " + question, '- [', [self.mask], ']', None, answer], []
+            parts_a, parts_b = [
+                None,
+                passage,
+                None,
+                f" {question}",
+                '- [',
+                [self.mask],
+                ']',
+                None,
+                answer,
+            ], []
         elif self.pattern_id == 4:
-            parts_a, parts_b = [passage, '.', None, ' Question:', " " + question, '?', None, " " + answer, '?', None,
-                                [self.mask], '.'], []
+            parts_a, parts_b = [
+                passage,
+                '.',
+                None,
+                ' Question:',
+                f" {question}",
+                '?',
+                None,
+                f" {answer}",
+                '?',
+                None,
+                [self.mask],
+                '.',
+            ], []
         else:
             raise NotImplementedError(self.pattern_id)
         parts_a, parts_b = self.replace_prompt_tokens(parts_a, parts_b)
@@ -885,11 +1035,25 @@ class WicPVP(PVP):
         word = example.meta['word']
 
         if self.pattern_id == 0:
-            parts_a, parts_b = [None, self.shortenable('"' + text_a + '" / "' + text_b + '"'), None,
-                                ' Similar sense of "' + word + '"?', None, [self.mask], '.'], []
+            parts_a, parts_b = [
+                None,
+                self.shortenable(f'"{text_a}" / "{text_b}"'),
+                None,
+                f' Similar sense of "{word}"?',
+                None,
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id == 1:
-            parts_a, parts_b = [self.shortenable(text_a), None, self.shortenable(" " + text_b), None,
-                                ' Does ' + word + ' have the same meaning in both sentences?', None, [self.mask]], []
+            parts_a, parts_b = [
+                self.shortenable(text_a),
+                None,
+                self.shortenable(f" {text_b}"),
+                None,
+                f' Does {word} have the same meaning in both sentences?',
+                None,
+                [self.mask],
+            ], []
         elif self.pattern_id == 2:
             parts_a, parts_b = [None, word, ' .', None, ' Sense (1) (a) "', self.shortenable(text_a), '"', None, ' (',
                                 [self.mask], ') "', text_b, '"'], []
@@ -934,7 +1098,7 @@ class AgnewsPVP(PVP):
         elif self.pattern_id == 5:
             return [[self.mask], '-', text_a, text_b], []
         else:
-            raise ValueError("No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
         return AgnewsPVP.VERBALIZER[label]
@@ -976,7 +1140,7 @@ class YahooPVP(PVP):
         elif self.pattern_id == 5:
             return [[self.mask], '-', text_a, text_b], []
         else:
-            raise ValueError("No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
         return YahooPVP.VERBALIZER[label]
@@ -1002,13 +1166,13 @@ class MnliPVP(PVP):
         text_a = self.shortenable(self.remove_final_punc(example.text_a))
         text_b = self.shortenable(example.text_b)
 
-        if self.pattern_id == 0 or self.pattern_id == 2:
+        if self.pattern_id in [0, 2]:
             return ['"', text_a, '" ?'], [[self.mask], ', "', text_b, '"']
-        elif self.pattern_id == 1 or self.pattern_id == 3:
+        elif self.pattern_id in [1, 3]:
             return [text_a, '?'], [[self.mask], ',', text_b]
 
     def verbalize(self, label) -> List[str]:
-        if self.pattern_id == 0 or self.pattern_id == 1:
+        if self.pattern_id in [0, 1]:
             return MnliPVP.VERBALIZER_A[label]
         return MnliPVP.VERBALIZER_B[label]
 
@@ -1039,7 +1203,7 @@ class TNewsPVP(PVP):
         if self.pattern_id == 0:
             return ["标题：", text_a, "关键词：", text_b, "类别：", [self.mask]], []
         else:
-            raise NotImplementedError("No pattern implemented for id {}".format(self.pattern_id))
+            raise NotImplementedError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
         if self.pattern_id == 0:
@@ -1065,10 +1229,10 @@ class AFQMCPVP(PVP):
         elif self.pattern_id == 1:
             return [text_a, "？"], [[self.mask], '，', text_b]
         else:
-            raise ValueError("No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
-        if self.pattern_id == 0 or self.pattern_id == 1:
+        if self.pattern_id in [0, 1]:
             return AFQMCPVP.VERBALIZER_A[label]
 
 
@@ -1094,7 +1258,7 @@ class YelpPolarityPVP(PVP):
         elif self.pattern_id == 3:
             return [text], [' In summary, the restaurant is', [self.mask], '.']
         else:
-            raise ValueError("No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
         return YelpPolarityPVP.VERBALIZER[label]
@@ -1129,9 +1293,9 @@ class XStancePVP(PVP):
         text_a = self.shortenable(example.text_a)
         text_b = self.shortenable(example.text_b)
 
-        if self.pattern_id == 0 or self.pattern_id == 2 or self.pattern_id == 4:
+        if self.pattern_id in [0, 2, 4]:
             return ['"', text_a, '"'], [[self.mask], '. "', text_b, '"']
-        elif self.pattern_id == 1 or self.pattern_id == 3 or self.pattern_id == 5:
+        elif self.pattern_id in [1, 3, 5]:
             return [text_a], [[self.mask], '.', text_b]
 
     def verbalize(self, label) -> List[str]:
@@ -1156,10 +1320,10 @@ class Sst2PVP(PVP):
 
     def get_parts(self, example: InputExample) -> FilledPattern:
         text = self.shortenable(example.text_a)
-        if self.pattern_id == 0 or self.pattern_id == 1:
+        if self.pattern_id in [0, 1]:
             return [text, ' It was', [self.mask], '.'], []
         else:
-            raise ValueError("No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
         if self.pattern_id == 0:
@@ -1179,7 +1343,7 @@ class ColaPVP(PVP):
         if self.pattern_id == 0:
             return ['"', text, '"', " This is", [self.mask], '.'], []
         else:
-            raise ValueError("No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
         return ColaPVP.VERBALIZER[label]
@@ -1204,7 +1368,7 @@ class MrpcPVP(PVP):
             text_b = self.shortenable(self.remove_final_punc(self.lowercase_first(example.text_b)))
             return [text_a], [" Does it mean that", text_b, "?", [self.mask]]
         else:
-            raise ValueError("No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
         return MrpcPVP.VERBALIZER[label]
@@ -1228,7 +1392,7 @@ class QqpPVP(PVP):
         elif self.pattern_id == 1:
             return [text_a], [[self.mask], ', ', text_b]
         else:
-            raise ValueError("No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
         return QqpPVP.VERBALIZER[label]
@@ -1248,17 +1412,34 @@ class QnliPVP(PVP):
         question = self.remove_final_punc(example.text_a)
         passage = example.text_b
         if self.pattern_id == 0:
-            return [self.shortenable(passage), ' Question:', self.shortenable(" " + question),
-                    '? Do you know the answer?', [self.mask], '.'], []
+            return [
+                self.shortenable(passage),
+                ' Question:',
+                self.shortenable(f" {question}"),
+                '? Do you know the answer?',
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id == 1:
-            return [self.shortenable(passage), ' Based on the previous passage, do you know the answer',
-                    self.shortenable(" " + question),
-                    '?', [self.mask], '.'], []
+            return [
+                self.shortenable(passage),
+                ' Based on the previous passage, do you know the answer',
+                self.shortenable(f" {question}"),
+                '?',
+                [self.mask],
+                '.',
+            ], []
         elif self.pattern_id == 2:
-            return ['Based on the following passage, do you know the answer', self.shortenable(" " + question), '?',
-                    [self.mask], '.', self.shortenable(" " + passage)], []
+            return [
+                'Based on the following passage, do you know the answer',
+                self.shortenable(f" {question}"),
+                '?',
+                [self.mask],
+                '.',
+                self.shortenable(f" {passage}"),
+            ], []
         else:
-            raise ValueError("No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
 
     def verbalize(self, label) -> List[str]:
         return QnliPVP.VERBALIZER[label]
@@ -1271,13 +1452,12 @@ class SquadPVP(PVP):
 
     def get_answers(self, example: InputExample):
         target = " " + example.meta['answer']['text']
-        answers = [target]
-        return answers
+        return [target]
 
     def get_parts(self, example: InputExample) -> FilledPattern:
         context = self.shortenable(example.text_a)
         question = example.text_b
-        return [context, " " + question, [self.mask], "."], []
+        return [context, f" {question}", [self.mask], "."], []
 
     def verbalize(self, label) -> List[str]:
         return []
@@ -1301,34 +1481,46 @@ class CLUEWSCPVP(PVP):
     def get_parts(self, example: InputExample) -> FilledPattern:
 
         pronoun = example.meta['span2_text']
-        pronoun_idx = example.meta['span2_index']
         pronoun_len = example.meta['span2_length']
         target = example.meta['span1_text']
         target_idx = example.meta['span1_index']
         target_len = example.meta['span1_length']
 
         words_a = list(example.text_a)
-        words_a[pronoun_idx] = '*' + words_a[pronoun_idx]
-        words_a[pronoun_idx+pronoun_len-1] = words_a[pronoun_idx+pronoun_len-1] + '*'
-        words_a[target_idx] = '#' + words_a[target_idx]
-        words_a[target_idx+target_len-1] = words_a[target_idx+target_len-1] + '#'
+        pronoun_idx = example.meta['span2_index']
+        words_a[pronoun_idx] = f'*{words_a[pronoun_idx]}'
+        words_a[
+            pronoun_idx + pronoun_len - 1
+        ] = f'{words_a[pronoun_idx + pronoun_len - 1]}*'
+        words_a[target_idx] = f'#{words_a[target_idx]}'
+        words_a[target_idx+target_len-1] = f'{words_a[target_idx + target_len - 1]}#'
 
         text_a = ''.join(words_a)
         text_a = self.shortenable(text_a)
 
         if self.pattern_id == 0:
-            parts_a, parts_b = [None, text_a, "代词'*" +
-                                pronoun + "*'", [self.mask], "指#" + target + '#.'], []
+            parts_a, parts_b = [
+                None,
+                text_a,
+                f"代词'*{pronoun}*'",
+                [self.mask],
+                f"指#{target}#.",
+            ], []
         elif self.pattern_id == 1:
-            parts_a, parts_b = ["在如下的句子中：", text_a, "代词'*" +
-                                pronoun + "*'", [self.mask], "指'#" + target + "#'."], []
+            parts_a, parts_b = [
+                "在如下的句子中：",
+                text_a,
+                f"代词'*{pronoun}*'",
+                [self.mask],
+                f"指'#{target}#'.",
+            ], []
         else:
             raise NotImplementedError(self.pattern_id)
         parts_a, parts_b = self.replace_prompt_tokens(parts_a, parts_b)
         return parts_a, parts_b
 
     def verbalize(self, label) -> List[str]:
-        if self.pattern_id == 0 or self.pattern_id == 1:
+        if self.pattern_id in [0, 1]:
             return CLUEWSCPVP.VERBALIZER_A[label]
         else:
             raise NotImplementedError
@@ -1345,8 +1537,7 @@ class CMRCPVP(PVP):
 
     def get_answers(self, example: InputExample):
         target = example.meta['answer']
-        answers = [target]
-        return answers
+        return [target]
 
     def get_parts(self, example: InputExample) -> FilledPattern:
         context = self.shortenable(example.text_a)
@@ -1355,11 +1546,14 @@ class CMRCPVP(PVP):
             parts_a, parts_b = [context, "请问，" +
                                 question, [self.mask], "。"], []
         elif self.pattern_id == 1:
-            parts_a, parts_b = ["根据以下信息：" + context,
-                                "请问，" + question, [self.mask], "。"], []
+            parts_a, parts_b = [
+                f"根据以下信息：{context}",
+                f"请问，{question}",
+                [self.mask],
+                "。",
+            ], []
         else:
-            raise ValueError(
-                "No pattern implemented for id {}".format(self.pattern_id))
+            raise ValueError(f"No pattern implemented for id {self.pattern_id}")
         parts_a, parts_b = self.replace_prompt_tokens(parts_a, parts_b)
         return parts_a, parts_b
 

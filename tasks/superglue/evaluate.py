@@ -42,8 +42,7 @@ def f1_score(prediction, ground_truth):
         return 0
     precision = 1.0 * num_same / len(prediction_tokens)
     recall = 1.0 * num_same / len(ground_truth_tokens)
-    f1 = (2 * precision * recall) / (precision + recall)
-    return f1
+    return (2 * precision * recall) / (precision + recall)
 
 
 def exact_match_score(prediction, ground_truth):
@@ -64,9 +63,8 @@ def qa_evaluate(predictions, labels, examples: List[InputExample], metric):
     assert len(examples) == len(predictions)
     score = 0.0
     for example, prediction in zip(examples, predictions):
-        ground_truths = example.meta["answers"]
-        prediction = example.meta["candidates"][prediction]
-        if ground_truths:
+        if ground_truths := example.meta["answers"]:
+            prediction = example.meta["candidates"][prediction]
             score += metric_max_over_ground_truths(metric, prediction, ground_truths)
     score = 100.0 * score / len(predictions)
     return score
@@ -117,10 +115,11 @@ def multirc_em(predictions, labels, examples: List[InputExample]):
     for qid, val in q_predictions:
         predictions_per_question[qid].append(val)
 
-    em = 0
-    for qid in unique_questions:
-        if actuals_per_question[qid] == predictions_per_question[qid]:
-            em += 1
+    em = sum(
+        1
+        for qid in unique_questions
+        if actuals_per_question[qid] == predictions_per_question[qid]
+    )
     em /= len(unique_questions)
     return em
 

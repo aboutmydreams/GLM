@@ -121,18 +121,17 @@ class GLMModel(torch.nn.Module):
         logits, hidden_layers = transformer_output
         outputs = hidden_layers
 
-        if self.output_predict:
-            # Parallel logits.
-            logits_parallel = mpu.copy_to_model_parallel_region(
-                logits)
-            logits_parallel = F.linear(logits_parallel, self.word_embeddings.weight)
-
-            if self.parallel_output:
-                return (logits_parallel, *outputs)
-
-            return (mpu.gather_from_model_parallel_region(logits_parallel), *outputs)
-        else:
+        if not self.output_predict:
             return (logits, *outputs)
+        # Parallel logits.
+        logits_parallel = mpu.copy_to_model_parallel_region(
+            logits)
+        logits_parallel = F.linear(logits_parallel, self.word_embeddings.weight)
+
+        if self.parallel_output:
+            return (logits_parallel, *outputs)
+
+        return (mpu.gather_from_model_parallel_region(logits_parallel), *outputs)
 
 
 class EncoderDecoder(torch.nn.Module):
@@ -197,17 +196,16 @@ class EncoderDecoder(torch.nn.Module):
         # Transformer.
         encoder_output, _ = self.encoder(source_embeddings, source_position_ids, source_mask)
         decoder_output, _ = self.decoder(target_embeddings, target_position_ids, target_mask)
-        if self.output_predict:
-            # Parallel logits.
-            output_parallel = mpu.copy_to_model_parallel_region(decoder_output)
-            logits_parallel = F.linear(output_parallel, self.word_embeddings.weight)
-
-            if self.parallel_output:
-                return (logits_parallel,)
-
-            return (mpu.gather_from_model_parallel_region(logits_parallel),)
-        else:
+        if not self.output_predict:
             return (decoder_output,)
+        # Parallel logits.
+        output_parallel = mpu.copy_to_model_parallel_region(decoder_output)
+        logits_parallel = F.linear(output_parallel, self.word_embeddings.weight)
+
+        if self.parallel_output:
+            return (logits_parallel,)
+
+        return (mpu.gather_from_model_parallel_region(logits_parallel),)
 
 
 def glm_get_params_for_weight_decay_optimization(module):

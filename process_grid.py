@@ -30,7 +30,7 @@ for dir_path in glob.glob(path_pattern, recursive=True):
             best_value = metric_value
             best_result = valid_result
             best_name = entry
-    elif target_type == "mean" or target_type == "median":
+    elif target_type in ["mean", "median"]:
         if mean_result:
             for metric, value in valid_result.items():
                 if metric not in ["type", "epoch"]:

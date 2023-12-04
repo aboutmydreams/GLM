@@ -80,7 +80,10 @@ def get_model(args, model_type=None, multi_token=True, num_labels=None, spell_le
             raise NotImplementedError
     else:
         output_predict, paralle_output = True, True
-        if (model_type == "multiple_choice" or model_type == "classification") and not args.cloze_eval:
+        if (
+            model_type in ["multiple_choice", "classification"]
+            and not args.cloze_eval
+        ):
             output_predict = False
         if model_type is not None:
             paralle_output = False
@@ -107,30 +110,33 @@ def get_model(args, model_type=None, multi_token=True, num_labels=None, spell_le
         if args.freeze_transformer:
             model.freeze_transformer(tune_prefix_layers=args.tune_prefix_layers)
         if model_type is not None:
-            if model_type == 'multiple_choice':
-                if args.cloze_eval:
-                    if multi_token:
-                        if args.fast_decode:
-                            model = GLMForMultiTokenClozeFast(model, length_penalty=args.length_penalty)
-                        else:
-                            model = GLMForMultiTokenCloze(model, length_penalty=args.length_penalty)
-                    else:
-                        model = GLMForSingleTokenCloze(model, take_softmax=args.adapet)
-                else:
-                    model = GLMForSequenceClassification(model, args.hidden_size, args.output_dropout, args.pool_token,
-                                                         num_class=num_labels)
-            elif model_type == 'classification':
+            if (
+                model_type == 'multiple_choice'
+                and args.cloze_eval
+                and multi_token
+            ):
+                model = (
+                    GLMForMultiTokenClozeFast(
+                        model, length_penalty=args.length_penalty
+                    )
+                    if args.fast_decode
+                    else GLMForMultiTokenCloze(
+                        model, length_penalty=args.length_penalty
+                    )
+                )
+            elif model_type == 'multiple_choice' and args.cloze_eval:
+                model = GLMForSingleTokenCloze(model, take_softmax=args.adapet)
+            elif model_type in ['multiple_choice', 'classification']:
                 model = GLMForSequenceClassification(model, args.hidden_size, args.output_dropout, args.pool_token,
                                                      num_class=num_labels)
-            elif model_type == 'generation':
-                pass
-            else:
+            elif model_type != 'generation':
                 raise NotImplementedError(model_type)
 
     if mpu.get_data_parallel_rank() == 0:
-        print(' > number of parameters on model parallel rank {}: {}'.format(
-            mpu.get_model_parallel_rank(),
-            sum([p.nelement() for p in model.parameters()])), flush=True)
+        print(
+            f' > number of parameters on model parallel rank {mpu.get_model_parallel_rank()}: {sum(p.nelement() for p in model.parameters())}',
+            flush=True,
+        )
 
     # To prevent OOM for model sizes that cannot fit in GPU memory in full precision
     if args.fp16:
@@ -143,16 +149,16 @@ def get_model(args, model_type=None, multi_token=True, num_labels=None, spell_le
     if args.fp16:
         model = FP16_Module(model)
 
-    # Wrap model for distributed training.
-    if not args.deepspeed and (args.train_iters or args.epochs):
-        if args.DDP_impl == 'torch':
+    if args.DDP_impl == 'torch':
+        if not args.deepspeed and (args.train_iters or args.epochs):
             i = torch.cuda.current_device()
             model = TorchDDP(model, device_ids=[i], output_device=i,
                              process_group=mpu.get_data_parallel_group())
-        elif args.DDP_impl == 'local':
+    elif args.DDP_impl == 'local':
+        if not args.deepspeed and (args.train_iters or args.epochs):
             model = LocalDDP(model)
-        else:
-            print_rank_0("Skip DDP model")
+    elif not args.deepspeed and (args.train_iters or args.epochs):
+        print_rank_0("Skip DDP model")
     return model
 
 
@@ -183,19 +189,17 @@ def get_optimizer(param_groups, args):
             cpu_adam_optimizer = DeepSpeedCPUAdam
         optimizer = cpu_adam_optimizer(param_groups,
                                        lr=args.lr, weight_decay=args.weight_decay)
+    elif args.optimizer == 'adam':
+        optimizer = Adam(param_groups,
+                         lr=args.lr,
+                         weight_decay=args.weight_decay,
+                         betas=(args.adam_beta1, args.adam_beta2),
+                         eps=args.adam_eps)
+    elif args.optimizer == 'adafactor':
+        from transformers import Adafactor
+        optimizer = Adafactor(param_groups, lr=args.lr, relative_step=False, warmup_init=False)
     else:
-        # Use FusedAdam.
-        if args.optimizer == 'adam':
-            optimizer = Adam(param_groups,
-                             lr=args.lr,
-                             weight_decay=args.weight_decay,
-                             betas=(args.adam_beta1, args.adam_beta2),
-                             eps=args.adam_eps)
-        elif args.optimizer == 'adafactor':
-            from transformers import Adafactor
-            optimizer = Adafactor(param_groups, lr=args.lr, relative_step=False, warmup_init=False)
-        else:
-            raise NotImplementedError
+        raise NotImplementedError
 
     print(f'Optimizer = {optimizer.__class__.__name__}')
     if hasattr(args, "deepspeed") and args.deepspeed:
@@ -229,15 +233,15 @@ def get_learning_rate_scheduler(optimizer, args):
     num_iters = max(1, num_iters)
     init_step = -1
     warmup_iter = args.warmup * num_iters
-    lr_scheduler = AnnealingLR(optimizer,
-                               start_lr=args.lr,
-                               warmup_iter=warmup_iter,
-                               num_iters=num_iters - warmup_iter,
-                               decay_style=args.lr_decay_style,
-                               last_iter=init_step,
-                               decay_ratio=args.lr_decay_ratio)
-
-    return lr_scheduler
+    return AnnealingLR(
+        optimizer,
+        start_lr=args.lr,
+        warmup_iter=warmup_iter,
+        num_iters=num_iters - warmup_iter,
+        decay_style=args.lr_decay_style,
+        last_iter=init_step,
+        decay_ratio=args.lr_decay_ratio,
+    )
 
 
 def setup_model_and_optimizer(args, model_type=None, multi_token=True, num_labels=None, spell_length=None):
@@ -276,12 +280,10 @@ def backward_step(optimizer, model, lm_loss, args, timers):
     # Backward pass.
     if args.deepspeed:
         model.backward(loss)
+    elif args.fp16:
+        optimizer.backward(loss, update_master_grads=False)
     else:
-        # optimizer.zero_grad()
-        if args.fp16:
-            optimizer.backward(loss, update_master_grads=False)
-        else:
-            loss.backward()
+        loss.backward()
 
     if args.deepspeed or args.DDP_impl == 'torch':
         # DeepSpeed backward propagation already addressed all reduce communication.
@@ -297,13 +299,12 @@ def backward_step(optimizer, model, lm_loss, args, timers):
         if args.fp16:
             optimizer.update_master_grads()
 
-        # Clipping gradients helps prevent the exploding gradient.
         if args.clip_grad > 0:
-            if not args.fp16:
-                mpu.clip_grad_norm(model.parameters(), args.clip_grad)
-            else:
+            if args.fp16:
                 optimizer.clip_master_grads(args.clip_grad)
 
+            else:
+                mpu.clip_grad_norm(model.parameters(), args.clip_grad)
     return lm_loss
 
 
@@ -357,21 +358,20 @@ def train_step(data_iterator, model, optimizer, lr_scheduler, args, timers, forw
                 if model.is_gradient_accumulation_boundary():
                     model.step()
                     complete = True
-                    if not (args.fp16 and optimizer.overflow):
-                        lr_scheduler.step()
-                    else:
+                    if args.fp16 and optimizer.overflow:
                         skipped_iter = 1
+                    else:
+                        lr_scheduler.step()
                 else:
                     model.step()
-            else:
-                if count == args.gradient_accumulation_steps:
-                    optimizer.step()
-                    complete = True
+            elif count == args.gradient_accumulation_steps:
+                optimizer.step()
+                complete = True
                     # Update learning rate.
-                    if not (args.fp16 and optimizer.overflow):
-                        lr_scheduler.step()
-                    else:
-                        skipped_iter = 1
+                if not args.fp16 or not optimizer.overflow:
+                    lr_scheduler.step()
+                else:
+                    skipped_iter = 1
             # print_rank_0("Optimizer step")
             timers('optimizer').stop()
             if complete:

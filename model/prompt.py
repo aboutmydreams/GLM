@@ -24,7 +24,7 @@ class PromptSpell(torch.nn.Module):
                                                 torch.nn.ReLU(),
                                                 torch.nn.Linear(self.hidden_size, self.hidden_size))
         elif self.spell_func != "none":
-            raise NotImplementedError("Prompt function " + self.spell_func)
+            raise NotImplementedError(f"Prompt function {self.spell_func}")
 
     def init_embedding(self, word_embeddings=None, task_tokens=None):
         num_words = 5000
@@ -45,6 +45,6 @@ class PromptSpell(torch.nn.Module):
         prompt_embeds = self.spell_embeddings.weight.unsqueeze(0)
         if self.spell_func == "lstm":
             prompt_embeds = self.lstm_head(prompt_embeds)[0]
-        if self.spell_func == "lstm" or self.spell_func == "mlp":
+        if self.spell_func in ["lstm", "mlp"]:
             prompt_embeds = self.mlp_head(prompt_embeds)
         return prompt_embeds

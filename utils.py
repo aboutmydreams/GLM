@@ -52,8 +52,7 @@ def print_rank_0(message):
 def get_hostname():
     hostname_cmd = ["hostname -I"]
     result = subprocess.check_output(hostname_cmd, shell=True)
-    master_addr = result.decode('utf-8').split()[0]
-    return master_addr
+    return result.decode('utf-8').split()[0]
 
 
 def get_spare_port(args):
@@ -77,7 +76,7 @@ def print_and_save_args(args, verbose=True, log_dir=None):
         print('arguments:', flush=True)
         for arg in vars(args):
             dots = '.' * (29 - len(arg))
-            print('  {} {} {}'.format(arg, dots, getattr(args, arg)), flush=True)
+            print(f'  {arg} {dots} {getattr(args, arg)}', flush=True)
     if log_dir is not None:
         json_file = os.path.join(log_dir, "config.json")
         with open(json_file, "w") as output:
@@ -180,25 +179,19 @@ def report_memory(name):
     """Simple GPU memory report."""
 
     mega_bytes = 1024.0 * 1024.0
-    string = name + ' memory (MB)'
-    string += ' | allocated: {}'.format(
-        torch.cuda.memory_allocated() / mega_bytes)
-    string += ' | max allocated: {}'.format(
-        torch.cuda.max_memory_allocated() / mega_bytes)
-    string += ' | cached: {}'.format(torch.cuda.memory_cached() / mega_bytes)
-    string += ' | max cached: {}'.format(
-        torch.cuda.memory_reserved() / mega_bytes)
+    string = f'{name} memory (MB)'
+    string += f' | allocated: {torch.cuda.memory_allocated() / mega_bytes}'
+    string += f' | max allocated: {torch.cuda.max_memory_allocated() / mega_bytes}'
+    string += f' | cached: {torch.cuda.memory_cached() / mega_bytes}'
+    string += f' | max cached: {torch.cuda.memory_reserved() / mega_bytes}'
     print_rank_0(string)
 
 
 def get_checkpoint_name(checkpoints_path, iteration, release=False, zero=False):
-    if release:
-        d = 'release'
-    else:
-        d = '{}'.format(iteration)
+    d = 'release' if release else f'{iteration}'
     if zero:
         dp_rank = mpu.get_data_parallel_rank()
-        d += '_zero_dp_rank_{}'.format(dp_rank)
+        d += f'_zero_dp_rank_{dp_rank}'
     return os.path.join(checkpoints_path, d, 'mp_rank_{:02d}_model_states.pt'.format(mpu.get_model_parallel_rank()))
 
 
@@ -218,7 +211,7 @@ def save_zero_checkpoint(args, iteration, optimizer):
     zero_checkpoint_name = get_checkpoint_name(args.save, iteration, zero=True)
     ensure_directory_exists(zero_checkpoint_name)
     torch.save(zero_sd, zero_checkpoint_name)
-    print('  successfully saved {}'.format(zero_checkpoint_name))
+    print(f'  successfully saved {zero_checkpoint_name}')
 
 
 def save_checkpoint(iteration, model, optimizer, lr_scheduler, args, tag=None, barrier=True,
@@ -228,42 +221,40 @@ def save_checkpoint(iteration, model, optimizer, lr_scheduler, args, tag=None, b
         tag = str(iteration)
     if args.deepspeed and not no_deepspeed:
         save_ds_checkpoint(iteration, model, lr_scheduler, args, tag=tag)
-    else:
-        # Only rank zer0 of the data parallel writes to the disk.
+    elif mpu.get_data_parallel_rank() == 0:
+        checkpoint_name = get_checkpoint_name(args.save, tag)
+        print('global rank {} is saving checkpoint at iteration {:7d} to {}'.
+              format(torch.distributed.get_rank(), iteration, checkpoint_name))
+        sd = {'iteration': iteration}
+        if args.deepspeed:
+            model = model.module
+        state_dict = model.state_dict()
+        if only_changed_parameters:
+            requires_grad_dict = {
+                name: parameter.requires_grad
+                for name, parameter in model.named_parameters()
+            }
+            state_dict = {key: value for key, value in state_dict.items() if requires_grad_dict[key]}
+        sd['module'] = state_dict
 
-        if mpu.get_data_parallel_rank() == 0:
-            checkpoint_name = get_checkpoint_name(args.save, tag)
-            print('global rank {} is saving checkpoint at iteration {:7d} to {}'.
-                  format(torch.distributed.get_rank(), iteration, checkpoint_name))
-            sd = {'iteration': iteration}
-            if args.deepspeed:
-                model = model.module
-            state_dict = model.state_dict()
-            if only_changed_parameters:
-                requires_grad_dict = {}
-                for name, parameter in model.named_parameters():
-                    requires_grad_dict[name] = parameter.requires_grad
-                state_dict = {key: value for key, value in state_dict.items() if requires_grad_dict[key]}
-            sd['module'] = state_dict
+        # Optimizer stuff.
+        if not args.no_save_optim and not no_save_optim:
+            if optimizer is not None:
+                sd['optimizer'] = optimizer.state_dict()
+            if lr_scheduler is not None:
+                sd['lr_scheduler'] = lr_scheduler.state_dict()
 
-            # Optimizer stuff.
-            if not args.no_save_optim and not no_save_optim:
-                if optimizer is not None:
-                    sd['optimizer'] = optimizer.state_dict()
-                if lr_scheduler is not None:
-                    sd['lr_scheduler'] = lr_scheduler.state_dict()
+        # rng states.
+        if not args.no_save_rng:
+            sd['random_rng_state'] = random.getstate()
+            sd['np_rng_state'] = np.random.get_state()
+            sd['torch_rng_state'] = torch.get_rng_state()
+            sd['cuda_rng_state'] = torch.cuda.get_rng_state()
+            sd['rng_tracker_states'] = mpu.get_cuda_rng_tracker().get_states()
 
-            # rng states.
-            if not args.no_save_rng:
-                sd['random_rng_state'] = random.getstate()
-                sd['np_rng_state'] = np.random.get_state()
-                sd['torch_rng_state'] = torch.get_rng_state()
-                sd['cuda_rng_state'] = torch.cuda.get_rng_state()
-                sd['rng_tracker_states'] = mpu.get_cuda_rng_tracker().get_states()
-
-            ensure_directory_exists(checkpoint_name)
-            torch.save(sd, checkpoint_name)
-            print('  successfully saved {}'.format(checkpoint_name))
+        ensure_directory_exists(checkpoint_name)
+        torch.save(sd, checkpoint_name)
+        print(f'  successfully saved {checkpoint_name}')
 
     # Wait so everyone is done (necessary)
     if barrier:
@@ -278,8 +269,7 @@ def save_checkpoint(iteration, model, optimizer, lr_scheduler, args, tag=None, b
 def save_ds_checkpoint(iteration, model, lr_scheduler, args, tag):
     """Save a model checkpoint."""
 
-    sd = {}
-    sd['iteration'] = iteration
+    sd = {'iteration': iteration}
     if lr_scheduler is not None:
         sd['client_lr_scheduler'] = lr_scheduler.state_dict()
     # rng states.
@@ -296,8 +286,7 @@ def get_checkpoint_iteration(load_path):
     # Read the tracker file and set the iteration.
     tracker_filename = get_checkpoint_tracker_filename(load_path)
     if not os.path.isfile(tracker_filename):
-        print_rank_0('WARNING: could not find the metadata file {} '.format(
-            tracker_filename))
+        print_rank_0(f'WARNING: could not find the metadata file {tracker_filename} ')
         if os.path.isdir(load_path):
             path = os.path.normpath(load_path)
             load_dir, tag = os.path.split(path)
@@ -351,8 +340,9 @@ def load_checkpoint(model, optimizer, lr_scheduler, args, no_deepspeed=False, no
         checkpoint_name = get_checkpoint_name(load_dir, tag, release)
 
         if mpu.get_data_parallel_rank() == 0:
-            print('global rank {} is loading checkpoint {}'.format(
-                torch.distributed.get_rank(), checkpoint_name))
+            print(
+                f'global rank {torch.distributed.get_rank()} is loading checkpoint {checkpoint_name}'
+            )
 
         # Load the checkpoint.
         sd = torch.load(checkpoint_name, map_location='cpu')
@@ -372,10 +362,9 @@ def load_checkpoint(model, optimizer, lr_scheduler, args, no_deepspeed=False, no
                 if lr_scheduler is not None:
                     lr_scheduler.load_state_dict(sd['lr_scheduler'])
             except KeyError:
-                print_rank_0('Unable to load optimizer from checkpoint {}, exiting. '
-                             'Specify --no-load-optim or --finetune to prevent '
-                             'attempting to load the optimizer '
-                             'state.'.format(checkpoint_name))
+                print_rank_0(
+                    f'Unable to load optimizer from checkpoint {checkpoint_name}, exiting. Specify --no-load-optim or --finetune to prevent attempting to load the optimizer state.'
+                )
 
     # Iterations.
     if args.finetune or release:
@@ -387,8 +376,9 @@ def load_checkpoint(model, optimizer, lr_scheduler, args, no_deepspeed=False, no
             try:  # Backward compatible with older checkpoints
                 iteration = sd['total_iters']
             except KeyError:
-                print_rank_0('A metadata file exists but Unable to load iteration '
-                             ' from checkpoint {}, starting from 0 iteration'.format(checkpoint_name))
+                print_rank_0(
+                    f'A metadata file exists but Unable to load iteration  from checkpoint {checkpoint_name}, starting from 0 iteration'
+                )
                 iteration = 0
 
     # rng states.
@@ -400,13 +390,12 @@ def load_checkpoint(model, optimizer, lr_scheduler, args, no_deepspeed=False, no
             torch.cuda.set_rng_state(sd['cuda_rng_state'])
             mpu.get_cuda_rng_tracker().set_states(sd['rng_tracker_states'])
         except KeyError:
-            print_rank_0('Unable to load random state from checkpoint {}, exiting. '
-                         'Specify --no-load-rng or --finetune to prevent '
-                         'attempting to load the random '
-                         'state.'.format(checkpoint_name))
+            print_rank_0(
+                f'Unable to load random state from checkpoint {checkpoint_name}, exiting. Specify --no-load-rng or --finetune to prevent attempting to load the random state.'
+            )
 
     if mpu.get_data_parallel_rank() == 0:
-        print('  successfully loaded {}'.format(checkpoint_name))
+        print(f'  successfully loaded {checkpoint_name}')
 
     return iteration
 
@@ -480,10 +469,9 @@ def debug_finetune_data(local_vars, batch_id, tokenizer):
             token = f"[{position_ids[batch_id][0, i].item()}]"
         output_tokens.append(token)
     print(" ".join(output_tokens))
-    target_positions = []
-    for i in range(sep, tokens.size(-1)):
-        if logit_mask[batch_id][i]:
-            target_positions.append(i)
+    target_positions = [
+        i for i in range(sep, tokens.size(-1)) if logit_mask[batch_id][i]
+    ]
     print(target_positions)
     print(tokenizer.DecodeIds(tokens[batch_id][target_positions].tolist()))
     if len(target_ids.shape) > 2:

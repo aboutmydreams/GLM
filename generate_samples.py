@@ -195,7 +195,7 @@ def read_context(tokenizer, args, output):
                 break
             generation_mask = '[gMASK]' if args.task_mask else '[MASK]'
             if args.block_lm and 'MASK]' not in raw_text:
-                raw_text += ' ' + generation_mask
+                raw_text += f' {generation_mask}'
             output.write(raw_text)
             context_tokens = tokenizer.EncodeAsIds(raw_text).tokenization
             if args.block_lm:

@@ -91,8 +91,7 @@ def main(args):
         patterns = args.test_data
         datapaths = []
         for pattern in patterns:
-            for path in glob(pattern, recursive=True):
-                datapaths.append(path)
+            datapaths.extend(iter(glob(pattern, recursive=True)))
         args.test_data = datapaths
     if args.continuous_prompt:
         model_kwargs["spell_length"] = pvp.spell_length

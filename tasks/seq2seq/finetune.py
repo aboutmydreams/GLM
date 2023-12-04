@@ -57,16 +57,13 @@ def train_valid_datasets_provider(args, tokenizer):
     """Provide train and validation datasets."""
     if args.task.lower() == 'blank':
         train_dataset = BlankLMDataset(args, split='train', tokenizer=tokenizer)
-        valid_dataset = None
     elif args.task.lower() == 'extraction':
         train_dataset = ExtractionDataset(args, split='train', tokenizer=tokenizer)
-        valid_dataset = None
     elif args.task.lower() == 'customization':
         train_dataset = CustomizationDataset(args, split='train', tokenizer=tokenizer)
-        valid_dataset = None
     else:
         train_dataset = Seq2SeqDataset(args, split='train', tokenizer=tokenizer)
-        valid_dataset = None
+    valid_dataset = None
     global global_tokenizer
     global_tokenizer = tokenizer
     return train_dataset, valid_dataset
@@ -116,21 +113,21 @@ def metrics_func_provider(args, tokenizer, is_test):
                     if idx not in res or res[idx] == '':
                         res[idx] = prediction
                 json.dump(res, output)
-            with open(output_file + ".refs", "w", encoding='utf-8') as output:
+            with open(f"{output_file}.refs", "w", encoding='utf-8') as output:
                 for prediction, example in zip(predictions, examples):
                     res = {'id': example.idx, 'pred': prediction, 'gold': example.meta['answers']}
                     output.write(json.dumps(res) + '\n')
             return
-        with open(output_file + ".hyps", "w", encoding='utf-8') as output:
+        with open(f"{output_file}.hyps", "w", encoding='utf-8') as output:
             for prediction in predictions:
                 output.write(prediction)
                 output.write("\n")
-        with open(output_file + ".refs", "w", encoding='utf-8') as output:
+        with open(f"{output_file}.refs", "w", encoding='utf-8') as output:
             for example in examples:
                 output.write(example.meta["ref"])
                 output.write("\n")
         if args.task.lower() == 'squad_generation':
-            with open(output_file + ".source", "w", encoding='utf-8') as output:
+            with open(f"{output_file}.source", "w", encoding='utf-8') as output:
                 for example in examples:
                     output.write(example.text_a.replace("\n", " ") + " Answer: " + example.meta["answer"])
                     output.write("\n")

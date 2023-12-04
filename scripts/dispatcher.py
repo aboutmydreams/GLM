@@ -104,7 +104,7 @@ def get_command(model, task, n_gpu, config, overwrite=True):
         command += "--overwrite "
 
     result_path = RESULT_PATH.format(EXPERIMENT_NAME=experiment_name)
-    log_path = LOG_PATH + f"{model}-{task}-{hyper}.txt"
+    log_path = f"{LOG_PATH}{model}-{task}-{hyper}.txt"
 
     return command, result_path, log_path
 
@@ -135,9 +135,9 @@ def update_cmd(cmd, config):
             continue
         if type(v) == bool:
             if v:
-                cmd += "--{} ".format(k)
+                cmd += f"--{k} "
         else:
-            cmd += "--{} {} ".format(k, v)
+            cmd += f"--{k} {v} "
 
     return cmd
 
@@ -188,11 +188,11 @@ def main():
         num_jobs += 1
 
     for job_queue, gpu in gpu_queues:
-        print("Start GPU worker {} with {} jobs".format(gpu, job_queue.qsize()))
+        print(f"Start GPU worker {gpu} with {job_queue.qsize()} jobs")
         multiprocessing.Process(target=_worker, args=(gpu, job_queue, done_queue, args)).start()
 
     timestamp = datetime.datetime.now().strftime("%m-%d-%H-%M")
-    summary_path = LOG_PATH + f"grid_{args.model}-{args.task}_{timestamp}.txt"
+    summary_path = f"{LOG_PATH}grid_{args.model}-{args.task}_{timestamp}.txt"
 
     print("Summary path:", summary_path)
 
@@ -202,12 +202,12 @@ def main():
         try:
             res = json.load(open(result_path))
         except Exception as e:
-            print("Experiment at {} failed".format(colored(result_path, 'red')))
+            print(f"Experiment at {colored(result_path, 'red')} failed")
             print(e)
             continue
 
         with open(summary_path, "a") as f:
-            f.write("Config: " + json.dumps(config) + "\n")
+            f.write(f"Config: {json.dumps(config)}" + "\n")
             f.write(json.dumps(res) + "\n")
 
     print('Done')
@@ -225,11 +225,11 @@ def _launch_experiment(gpu, config, args):
 
     command, result_path, log_path = get_command(args.model, args.task, args.n_gpu, config, args.overwrite)
 
-    shell_cmd = f"CUDA_VISIBLE_DEVICES={gpu} " + command 
+    shell_cmd = f"CUDA_VISIBLE_DEVICES={gpu} {command}"
     if not args.debug:
         shell_cmd += f" > {log_path} 2>&1; "
 
-    print("Time {}, launched exp: {}".format(str(datetime.datetime.now()), log_path))
+    print(f"Time {str(datetime.datetime.now())}, launched exp: {log_path}")
 
     # if experiment has already been run, skip
     if not os.path.exists(result_path) or args.overwrite:
@@ -237,7 +237,7 @@ def _launch_experiment(gpu, config, args):
 
     if not os.path.exists(result_path):
         # running this process failed, alert me
-        print("Dispatcher, Alert! Job has crashed! Check logfile at:[{}]".format(log_path))
+        print(f"Dispatcher, Alert! Job has crashed! Check logfile at:[{log_path}]")
 
     return result_path, config
 

@@ -286,15 +286,14 @@ class ParallelSelfAttention(torch.nn.Module):
 
             attention_scores = ac_score + bd_score
             attention_scores = attention_scores / math.sqrt(self.hidden_size_per_attention_head)
+        elif self.attention_scale > 1.0:
+            # Raw attention scores. [b, np, s, s]
+            attention_scores = torch.matmul(query_layer / math.sqrt(self.attention_scale),
+                                        key_layer.transpose(-1, -2) / math.sqrt(
+                                            self.hidden_size_per_attention_head * self.attention_scale))
         else:
-            if self.attention_scale > 1.0:
-                # Raw attention scores. [b, np, s, s]
-                attention_scores = torch.matmul(query_layer / math.sqrt(self.attention_scale),
-                                            key_layer.transpose(-1, -2) / math.sqrt(
-                                                self.hidden_size_per_attention_head * self.attention_scale))
-            else:
-                attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2) / math.sqrt(
-                    self.hidden_size_per_attention_head))
+            attention_scores = torch.matmul(query_layer, key_layer.transpose(-1, -2) / math.sqrt(
+                self.hidden_size_per_attention_head))
 
         # Apply the left to right attention mask.
         attention_scores = torch.mul(attention_scores, ltor_mask)
@@ -318,7 +317,7 @@ class ParallelSelfAttention(torch.nn.Module):
         # [b, s, np, hn]
         context_layer = context_layer.permute(0, 2, 1, 3).contiguous()
         new_context_layer_shape = context_layer.size()[:-2] + \
-                                  (self.hidden_size_per_partition,)
+                                      (self.hidden_size_per_partition,)
         # [b, s, hp]
         context_layer = context_layer.view(*new_context_layer_shape)
 
@@ -484,9 +483,7 @@ class ParallelDecoderLayer(torch.nn.Module):
         layernorm_output = self.post_attention_layernorm(layernorm_input)
         # MLP.
         mlp_output = self.mlp(layernorm_output)
-        # Second residual connection.
-        output = layernorm_input + mlp_output
-        return output
+        return layernorm_input + mlp_output
 
 
 class ParallelTransformerLayer(torch.nn.Module):
@@ -575,10 +572,7 @@ class ParallelTransformerLayer(torch.nn.Module):
         layernorm_output = self.post_attention_layernorm(layernorm_input)
         # MLP.
         mlp_output = self.mlp(layernorm_output)
-        # Second residual connection.
-        output = layernorm_input + mlp_output
-
-        return output
+        return layernorm_input + mlp_output
 
 
 def unscaled_init_method(sigma):
@@ -793,9 +787,7 @@ class GPT2ParallelTransformer(torch.nn.Module):
         hidden_states = self.embedding_dropout(hidden_states)
 
         def check_detach(_hidden_states):
-            if detach_memory:
-                return _hidden_states.detach()
-            return _hidden_states
+            return _hidden_states.detach() if detach_memory else _hidden_states
 
         if self.max_memory_length > 0 or return_memory:
             mem_layers = [check_detach(hidden_states)]

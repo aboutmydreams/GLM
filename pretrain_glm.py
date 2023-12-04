@@ -61,10 +61,7 @@ def get_masks_and_position_ids(data,
             attention_mask = torch.ones((1, seq_length, seq_length + mem_length), device=data.device)
         attention_mask = torch.tril(torch.triu(attention_mask, 1 - seq_length + mem_length), mem_length)
     else:
-        if reset_attention_mask:
-            att_mask_batch = batch_size
-        else:
-            att_mask_batch = 1
+        att_mask_batch = batch_size if reset_attention_mask else 1
         if attention_mask is None:
             attention_mask = torch.ones((att_mask_batch, seq_length, seq_length), device=data.device)
         attention_mask = torch.tril(attention_mask)
@@ -254,11 +251,7 @@ def forward_step(data_iterator, model, args, timers, mems):
                   tokenizer.DecodeIds(labels[batch_id, last_index:].tolist()).encode('utf-8'),
                   position_ids_[batch_id, last_index:].tolist(), block_position_ids[batch_id, last_index:].tolist())
 
-    if data is not None and "mode" in data:
-        mode = data['mode']
-    else:
-        mode = 'bert'
-
+    mode = data['mode'] if data is not None and "mode" in data else 'bert'
     logits, *mems = model(tokens, position_ids, attention_mask, *mems)
     losses = mpu.vocab_parallel_cross_entropy(logits.contiguous().float(),
                                               labels)
@@ -271,8 +264,9 @@ def forward_step(data_iterator, model, args, timers, mems):
 
 
 def report_iteration_metrics(summary_writer, optimizer, lr, loss, elapsed_time, step, total_step, args):
-    log_string = ' iteration {:8d}/{:8d} |'.format(step, total_step)
-    log_string += ' elapsed time per iteration (ms): {:.1f} |'.format(elapsed_time)
+    log_string = ' iteration {:8d}/{:8d} |'.format(
+        step, total_step
+    ) + ' elapsed time per iteration (ms): {:.1f} |'.format(elapsed_time)
     log_string += ' learning rate {:.3E} |'.format(lr)
     log_string += ' lm loss {:.6E} |'.format(loss)
     if args.fp16:
@@ -280,14 +274,13 @@ def report_iteration_metrics(summary_writer, optimizer, lr, loss, elapsed_time, 
             optimizer.cur_scale if args.deepspeed else optimizer.loss_scale)
     print_rank_0(log_string)
     if summary_writer is not None:
-        summary_writer.add_scalar(f'Train/lr', lr, step)
-        summary_writer.add_scalar(f'Train/train_loss', loss, step)
-        summary_writer.add_scalar(f'Train/elapsed_time', elapsed_time, step)
+        summary_writer.add_scalar('Train/lr', lr, step)
+        summary_writer.add_scalar('Train/train_loss', loss, step)
+        summary_writer.add_scalar('Train/elapsed_time', elapsed_time, step)
 
 
 def report_evaluate_metrics(summary_writer, prefix, loss, ppl, gpt_loss, bert_loss, sent_loss, multi_loss, step):
-    string = ' validation loss at {}'.format(prefix)
-    string += ' | LM loss: {:.6E}'.format(loss)
+    string = f' validation loss at {prefix}' + ' | LM loss: {:.6E}'.format(loss)
     string += ' | LM PPL: {:.6E}'.format(ppl)
     if gpt_loss != 0:
         string += ' | GPT loss: {:.6E}'.format(gpt_loss)
@@ -303,16 +296,16 @@ def report_evaluate_metrics(summary_writer, prefix, loss, ppl, gpt_loss, bert_lo
     print_rank_0(string)
     print_rank_0('-' * length)
     if summary_writer is not None:
-        summary_writer.add_scalar(f'Train/valid_ppl', ppl, step)
-        summary_writer.add_scalar(f'Train/valid_loss', loss, step)
+        summary_writer.add_scalar('Train/valid_ppl', ppl, step)
+        summary_writer.add_scalar('Train/valid_loss', loss, step)
         if gpt_loss != 0:
-            summary_writer.add_scalar(f'Train/valid_gpt_loss', gpt_loss, step)
+            summary_writer.add_scalar('Train/valid_gpt_loss', gpt_loss, step)
         if bert_loss != 0:
-            summary_writer.add_scalar(f'Train/valid_bert_loss', bert_loss, step)
+            summary_writer.add_scalar('Train/valid_bert_loss', bert_loss, step)
         if sent_loss != 0:
-            summary_writer.add_scalar(f'Train/valid_sent_loss', sent_loss, step)
+            summary_writer.add_scalar('Train/valid_sent_loss', sent_loss, step)
         if multi_loss != 0:
-            summary_writer.add_scalar(f'Train/valid_multi_loss', multi_loss, step)
+            summary_writer.add_scalar('Train/valid_multi_loss', multi_loss, step)
 
 
 def train(model, optimizer, lr_scheduler,
@@ -353,7 +346,7 @@ def train(model, optimizer, lr_scheduler,
                                      elapsed_time * 1000.0 / args.log_interval, args.iteration, args.train_iters, args)
             total_lm_loss = 0.0
             if report_memory_flag:
-                report_memory('after {} iterations'.format(args.iteration))
+                report_memory(f'after {args.iteration} iterations')
                 report_memory_flag = False
             # for i in range(torch.distributed.get_world_size()):
             #     if i == torch.distributed.get_rank():
@@ -376,7 +369,7 @@ def train(model, optimizer, lr_scheduler,
 
         # Evaluation
         if args.eval_interval and args.iteration % args.eval_interval == 0 and args.do_valid:
-            prefix = 'iteration {}'.format(args.iteration)
+            prefix = f'iteration {args.iteration}'
             evaluate_and_print_results(
                 prefix, val_data_iterator, model, args, timers, verbose=False, step=args.iteration,
                 summary_writer=summary_writer, forward_step_func=forward_step)
@@ -397,7 +390,7 @@ def evaluate(data_iterator, model, args, timers, forward_step_func, verbose=Fals
         while iteration < args.eval_iters:
             iteration += 1
             if verbose and iteration % args.log_interval == 0:
-                print_rank_0('Evaluating iter {}/{}'.format(iteration, args.eval_iters))
+                print_rank_0(f'Evaluating iter {iteration}/{args.eval_iters}')
             # Forward evaluation.
             lm_loss, mems, mode = forward_step_func(data_iterator, model, args, timers, mems=mems)
 
@@ -410,18 +403,18 @@ def evaluate(data_iterator, model, args, timers, forward_step_func, verbose=Fals
 
             lm_loss = lm_loss.data.detach().float().item()
             total_lm_loss += lm_loss
-            if mode == 'gpt':
-                total_gpt_loss += lm_loss
-                gpt_iters += 1
-            elif mode == 'bert':
+            if mode == 'bert':
                 total_bert_loss += lm_loss
                 bert_iters += 1
-            elif mode == 'sentence':
-                total_sent_loss += lm_loss
-                sent_iters += 1
+            elif mode == 'gpt':
+                total_gpt_loss += lm_loss
+                gpt_iters += 1
             elif mode == 'multi-task':
                 total_multi_loss += lm_loss
                 multi_iters += 1
+            elif mode == 'sentence':
+                total_sent_loss += lm_loss
+                sent_iters += 1
     # Move model back to the train mode.
     model.train()
     # Reduce across processes.
@@ -485,7 +478,7 @@ def initialize_distributed(args):
     init_method = 'tcp://'
     args.master_ip = os.getenv('MASTER_ADDR', 'localhost')
     args.master_port = os.getenv('MASTER_PORT', '6000')
-    init_method += args.master_ip + ':' + args.master_port
+    init_method += f'{args.master_ip}:{args.master_port}'
     if hasattr(deepspeed, "init_distributed"):
         deepspeed.init_distributed(dist_backend=args.distributed_backend)
     else:
@@ -619,18 +612,12 @@ def main():
         if multi_val_data is not None:
             start_iter_val = (args.iteration // args.eval_interval) * args.eval_iters * args.multi_task_ratio
             multi_val_data.batch_sampler.start_iter = start_iter_val % len(multi_val_data)
-    if train_data is not None:
-        train_data_iterator = iter(train_data)
-    else:
-        train_data_iterator = None
+    train_data_iterator = iter(train_data) if train_data is not None else None
     if multi_train_data is not None:
         multi_train_iterator = iter(multi_train_data)
     else:
         multi_train_iterator = None
-    if val_data is not None:
-        val_data_iterator = iter(val_data)
-    else:
-        val_data_iterator = None
+    val_data_iterator = iter(val_data) if val_data is not None else None
     if multi_val_data is not None:
         multi_val_iterator = iter(multi_val_data)
     else:
@@ -659,11 +646,7 @@ def main():
     if args.save and iteration != 0:
         save_checkpoint(iteration, model, optimizer, lr_scheduler, args)
 
-    if test_data is not None:
-        test_data_iterator = iter(test_data)
-    else:
-        test_data_iterator = None
-
+    test_data_iterator = iter(test_data) if test_data is not None else None
     if args.do_test:
         # Run on test data.
         prefix = 'the end of training for test data'
