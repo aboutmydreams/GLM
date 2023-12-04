@@ -29,9 +29,7 @@ def convert_glm_checkpoint_to_transformers(checkpoint_path, copy_dict=None):
 if __name__ == "__main__":
     checkpoint_path = sys.argv[1]
     model_name = sys.argv[2]
-    copy_dict = None
     assert model_name in ["glm-large", "glm-roberta-large", "glm-large-chinese", "glm-515m", "glm-2b", "glm-10b",
                           "glm-10b-chinese"]
-    if model_name == "glm-10b-chinese":
-        copy_dict = [(50007, 50009)]
+    copy_dict = [(50007, 50009)] if model_name == "glm-10b-chinese" else None
     convert_glm_checkpoint_to_transformers(checkpoint_path, copy_dict)

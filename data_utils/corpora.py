@@ -52,10 +52,7 @@ class KeyDataset(data.Dataset):
         mask_length = self.masks[index]
         mask = []
         for i, length in enumerate(mask_length):
-            if i % 2 == 0:
-                mask += [0] * length
-            else:
-                mask += [1] * length
+            mask += [0] * length if i % 2 == 0 else [1] * length
         assert len(text) == len(mask)
         return {"tokens": text, "loss_masks": mask}
 
@@ -213,8 +210,8 @@ class KeyReader(DataReader):
         keys, contents = data['key'], data["content"]
         assert len(keys) == len(contents)
         for i in range(1, len(keys)):
-            keys[i] = " " + keys[i]
-        contents = [" " + content for content in contents]
+            keys[i] = f" {keys[i]}"
+        contents = [f" {content}" for content in contents]
         keys = [tokenizer.EncodeAsIds(key).tokenization for key in keys]
         contents = [tokenizer.EncodeAsIds(content).tokenization for content in contents]
         summary = sum(keys, [])
@@ -226,8 +223,7 @@ class KeyReader(DataReader):
             content = content + [tokenizer.get_command('eop').Id]
             text += key
             text += content
-            text_mask.append(len(key))
-            text_mask.append(len(content))
+            text_mask.extend((len(key), len(content)))
         return (summary, summary_mask), (text, text_mask)
 
     def tokenize_worker(self, input, output, info, tokenizer, tokenize):
@@ -324,8 +320,11 @@ class baike(PromptReader):
 
     def process_line(self, data, tokenizer, tokenize):
         prompts, texts = [], []
-        text = data.get("title", "") + data.get("abstract", "") + data.get("content", "")
-        if text:
+        if (
+            text := data.get("title", "")
+            + data.get("abstract", "")
+            + data.get("content", "")
+        ):
             p, t = self.process_sample("", tokenizer, tokenize), self.process_sample(text, tokenizer, tokenize)
             prompts.append(p)
             texts.append(t)
@@ -389,9 +388,9 @@ class CCNews(PromptReader):
         description = data.get("description", None)
         maintext = data.get("maintext", None)
         if title:
-            text += title.strip() + " "
+            text += f"{title.strip()} "
         if description and (not maintext or not maintext.startswith(description)):
-            text += description.strip() + " "
+            text += f"{description.strip()} "
         if maintext:
             text += maintext
         if len(text) > 100:
@@ -436,8 +435,7 @@ class Pile(PromptReader):
     def tokenize_worker(self, input, output, info, tokenizer, tokenize):
         source_dict = defaultdict(int)
         for row in iter(input.get, 'STOP'):
-            row = row.rstrip()
-            if row:
+            if row := row.rstrip():
                 if self.is_json:
                     row = json.loads(row)
                 prompts, texts, source = self.process_line(row, tokenizer, tokenize)
@@ -471,8 +469,7 @@ class Stories(PromptReader):
     PATH = "/dataset/fd5061f6/english_data/stories_31G.jsonl"
 
     def process_line(self, data, tokenizer, tokenize):
-        text = data.get("text", None)
-        if text:
+        if text := data.get("text", None):
             prompt, text = self.process_sample("", tokenizer, tokenize), self.process_sample(text, tokenizer,
                                                                                              tokenize)
             return [prompt], [text]
@@ -500,7 +497,7 @@ class WuDaoCorpus(PromptReader):
         title = item.get("title", None)
         content = item.get("content", None)
         if title:
-            text += title.strip() + " "
+            text += f"{title.strip()} "
         if content:
             text += content
         if len(text) > 100:

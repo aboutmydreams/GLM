@@ -435,8 +435,9 @@ def get_args():
 
     args.model_parallel_size = min(args.model_parallel_size, args.world_size)
     if args.rank == 0:
-        print('using world size: {} and model-parallel size: {} '.format(
-            args.world_size, args.model_parallel_size))
+        print(
+            f'using world size: {args.world_size} and model-parallel size: {args.model_parallel_size} '
+        )
 
     args.dynamic_loss_scale = False
     if args.loss_scale is None:
@@ -474,15 +475,13 @@ def mpi_define_env(args):
     rank = comm.Get_rank()
     world_size = comm.Get_size()
 
-    master_addr = None
-    if rank == 0:
-        master_addr = get_hostname()
+    master_addr = get_hostname() if rank == 0 else None
     master_addr = comm.bcast(master_addr, root=0)
 
     # Determine local rank by assuming hostnames are unique
     proc_name = MPI.Get_processor_name()
     all_procs = comm.allgather(proc_name)
-    local_rank = sum([i == proc_name for i in all_procs[:rank]])
+    local_rank = sum(i == proc_name for i in all_procs[:rank])
 
     os.environ['RANK'] = str(rank)
     os.environ['WORLD_SIZE'] = str(world_size)
@@ -493,9 +492,5 @@ def mpi_define_env(args):
     os.environ['MASTER_PORT'] = "29500"  # TORCH_DISTRIBUTED_DEFAULT_PORT = 29500
 
     print(
-        "Discovered MPI settings of world_rank={}, local_rank={}, world_size={}, master_addr={}, master_port={}"
-            .format(os.environ['RANK'],
-                    args.local_rank,
-                    os.environ['WORLD_SIZE'],
-                    os.environ['MASTER_ADDR'],
-                    os.environ['MASTER_PORT']))
+        f"Discovered MPI settings of world_rank={os.environ['RANK']}, local_rank={args.local_rank}, world_size={os.environ['WORLD_SIZE']}, master_addr={os.environ['MASTER_ADDR']}, master_port={os.environ['MASTER_PORT']}"
+    )

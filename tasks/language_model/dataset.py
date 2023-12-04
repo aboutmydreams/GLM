@@ -73,7 +73,7 @@ class LMDataset(torch.utils.data.Dataset):
 class LambadaDataset(torch.utils.data.Dataset):
     def __init__(self, args, tokenizer, strict=True):
         data_path = args.valid_data[0]
-        print_rank_0('> building lambada dataset from {} ...'.format(data_path))
+        print_rank_0(f'> building lambada dataset from {data_path} ...')
         self.args = args
         self.max_seq_length = args.seq_length
         self.tokenizer = tokenizer
@@ -87,7 +87,7 @@ class LambadaDataset(torch.utils.data.Dataset):
         self.tokens = []
         self.labels = []
         with open(data_path, 'r') as f:
-            for line in f.readlines():
+            for line in f:
                 text = json.loads(line)['text']
                 tokens, labels = self.get_tokens(text)
                 self.tokens.append(tokens)
@@ -100,7 +100,7 @@ class LambadaDataset(torch.utils.data.Dataset):
         last_token = text.split()[-1]
         start_idx = text.rfind(last_token)
         beginning_tokens = self.tokenizer.EncodeAsIds(text[:start_idx].strip()).tokenization
-        last_token = self.tokenizer.EncodeAsIds(' ' + last_token).tokenization
+        last_token = self.tokenizer.EncodeAsIds(f' {last_token}').tokenization
         return beginning_tokens, last_token
 
     def __len__(self):
@@ -149,7 +149,9 @@ def build_lambada_dataset(tokenizer, args):
     """Build lambada dataset."""
     assert len(args.valid_data) == 1
     val_dataset = LambadaDataset(args, tokenizer, strict=True)
-    print_rank_0(' > found {} samples, {} label tokens.'.format(len(val_dataset), sum(map(len, val_dataset.labels))))
+    print_rank_0(
+        f' > found {len(val_dataset)} samples, {sum(map(len, val_dataset.labels))} label tokens.'
+    )
     return val_dataset
 
 
@@ -164,8 +166,8 @@ def build_lm_dataset(tokenizer, args):
             documents.append(tokens)
     val_dataset = LMDataset(args, documents, tokenizer, num_original_tokens, num_tokens)
     print_rank_0(
-        ' > number of document: {}, number of original tokens {}, number of detokenized tokens: {}'.format(
-            len(documents), num_original_tokens, num_tokens))
+        f' > number of document: {len(documents)}, number of original tokens {num_original_tokens}, number of detokenized tokens: {num_tokens}'
+    )
     return val_dataset
 
 
@@ -182,6 +184,7 @@ def build_wikitext103_dataset(tokenizer, args):
     num_tokenized_tokens = len(tokenized_data)
 
     val_dataset = LMDataset(args, [tokenized_data], tokenizer, num_original_tokens, num_tokenized_tokens)
-    print_rank_0(' > number of original tokens: {}, number of detokenized '
-                 'tokens: {}'.format(num_original_tokens, num_tokenized_tokens))
+    print_rank_0(
+        f' > number of original tokens: {num_original_tokens}, number of detokenized tokens: {num_tokenized_tokens}'
+    )
     return val_dataset

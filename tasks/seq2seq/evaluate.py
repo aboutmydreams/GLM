@@ -12,10 +12,7 @@ from rouge_score import rouge_scorer
 
 
 def _is_digit(w):
-    for ch in w:
-        if not (ch.isdigit() or ch == ','):
-            return False
-    return True
+    return all((ch.isdigit() or ch == ',') for ch in w)
 
 
 gigaword_tok_dict = {"(": "-lrb-", ")": "-rrb-",
@@ -57,7 +54,7 @@ def fix_tokenization(text, dataset):
             output_tokens.append("n't")
             i += 2
         elif tok == "'" and i < len(input_tokens) - 1 and input_tokens[i + 1] in ("s", "d", "ll"):
-            output_tokens.append("'" + input_tokens[i + 1])
+            output_tokens.append(f"'{input_tokens[i + 1]}")
             i += 2
         elif tok == "'":
             if has_left_single_quote:
@@ -72,12 +69,12 @@ def fix_tokenization(text, dataset):
         elif tok == "," and len(output_tokens) > 0 and _is_digit(output_tokens[-1]) and i < len(
                 input_tokens) - 1 and _is_digit(input_tokens[i + 1]):
             # $ 3 , 000 -> $ 3,000
-            output_tokens[-1] += ',' + input_tokens[i + 1]
+            output_tokens[-1] += f',{input_tokens[i + 1]}'
             i += 2
         elif tok == "." and len(output_tokens) > 0 and output_tokens[-1].isdigit() and i < len(input_tokens) - 1 and \
                 input_tokens[i + 1].isdigit():
             # 3 . 03 -> $ 3.03
-            output_tokens[-1] += '.' + input_tokens[i + 1]
+            output_tokens[-1] += f'.{input_tokens[i + 1]}'
             i += 2
         elif tok == "." and len(output_tokens) > 0 and len(output_tokens[-1]) == 1 and output_tokens[
             -1].isalpha() and i < len(input_tokens) - 2 and len(input_tokens[i + 1]) == 1 and input_tokens[
@@ -95,7 +92,7 @@ def fix_tokenization(text, dataset):
             if i < len(input_tokens) - 1 and input_tokens[i + 1] == "-":
                 output_tokens.append("--")
                 i += 2
-            elif i == len(input_tokens) - 1 or i == 0:
+            elif i in [len(input_tokens) - 1, 0]:
                 output_tokens.append("-")
                 i += 1
             elif output_tokens[-1] not in string.punctuation and input_tokens[i + 1][0] not in string.punctuation:
@@ -118,7 +115,7 @@ def fix_tokenization(text, dataset):
 def count_tokens(tokens):
     counter = {}
     for t in tokens:
-        if t in counter.keys():
+        if t in counter:
             counter[t] += 1
         else:
             counter[t] = 1
@@ -132,10 +129,11 @@ def get_f1(text_a, text_b):
         return 1 if len(tokens_a) == len(tokens_b) else 0
     set_a = count_tokens(tokens_a)
     set_b = count_tokens(tokens_b)
-    match = 0
-    for token in set_a.keys():
-        if token in set_b.keys():
-            match += min(set_a[token], set_b[token])
+    match = sum(
+        min(set_a[token], set_b[token])
+        for token in set_a.keys()
+        if token in set_b.keys()
+    )
     p = match / len(tokens_a)
     r = match / len(tokens_b)
     return 2.0 * p * r / (p + r + 1e-5)
@@ -185,8 +183,7 @@ def rouge_metric(predictions, labels, examples, metric="rouge-1", duplicate_rate
     scorer = rouge_scorer.RougeScorer([metric_dict[metric]], use_stemmer=True)
     scores = [scorer.score(pred, ref) for pred, ref in zip(pred_list, ref_list)]
     scores = [score[metric_dict[metric]].fmeasure for score in scores]
-    scores = sum(scores) / len(scores)
-    return scores
+    return sum(scores) / len(scores)
 
 
 def squad_fix_tokenization(text):
@@ -204,9 +201,7 @@ def squad_fix_tokenization(text):
     while i < len(tokens):
         if tokens[i] in [",", ".", ":"] and i > 0 and i+1 < len(tokens):
             if tokens[i - 1][-1].isdigit() and tokens[i + 1][0].isdigit():
-                if tokens[i] == ',' and len(tokens[i + 1]) > 3:
-                    pass
-                else:
+                if tokens[i] != ',' or len(tokens[i + 1]) <= 3:
                     tokens[i - 1] = tokens[i - 1] + tokens[i] + tokens[i + 1]
                     tokens = tokens[:i] + tokens[i+2:]
                     i -= 1
@@ -378,7 +373,9 @@ class DecoderEvaluater:
         model.train()
         torch.distributed.barrier()
         print_rank_0("Evaluation completed")
-        gathered_predictions = [None for i in range(torch.distributed.get_world_size())]
+        gathered_predictions = [
+            None for _ in range(torch.distributed.get_world_size())
+        ]
         torch.distributed.all_gather_object(gathered_predictions, local_predictions)
         gathered_predictions = {uid: pred for preds in gathered_predictions for uid, pred in preds.items() }
         predictions, examples, scores = [], [], []
@@ -434,7 +431,6 @@ class BlankLMEvaluater(DecoderEvaluater):
                         # print(tokens)
                         # print(position_ids)
                         next_token_logits, *mems = model(tokens, position_ids, attention_mask, return_memory=True)
-                        next_token_logits = next_token_logits[:, -1]
                         position_ids = tokens.new_ones(batch_size, 2, 1)
                         for i, text in enumerate(tokens.tolist()):
                             mask_pos = mask_positions[i][current_mask[i]]
@@ -446,7 +442,7 @@ class BlankLMEvaluater(DecoderEvaluater):
                         last_token = tokens[:, -1:]
                         next_token_logits, *mems = model(last_token, position_ids, attention_mask, *mems,
                                                          return_memory=True)
-                        next_token_logits = next_token_logits[:, -1]
+                    next_token_logits = next_token_logits[:, -1]
                     next_token_scores = F.log_softmax(next_token_logits, dim=-1)
                     next_token_scores = self.processors(tokens, next_token_scores)
                     next_tokens = next_token_scores.max(dim=-1)[1]
@@ -482,13 +478,12 @@ class BlankLMEvaluater(DecoderEvaluater):
                             if current_blank < len(blanks):
                                 output_tokens += blanks[current_blank]
                             current_blank += 1
-                        else:
-                            if token not in [self.pad_token]:
-                                output_tokens.append(token)
+                        elif token not in [self.pad_token]:
+                            output_tokens.append(token)
                     text = self.tokenizer.DecodeIds(output_tokens[:-1])
                     text = blanklm_fix_tokenization(text)
                     predictions.append(text)
-                    # print(text)
+                                # print(text)
                 uid_list = data['uid']
                 if isinstance(uid_list, torch.Tensor):
                     uid_list = uid_list.cpu().numpy().tolist()

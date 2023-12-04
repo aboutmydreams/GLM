@@ -63,11 +63,9 @@ class MultiTaskDataset(torch.utils.data.Dataset):
         if len(text.shape) == 2:
             text = text[label]
             loss_mask = loss_mask[label]
-            target = target[label]
             attention_mask = attention_mask[label]
             position_id = position_id[label]
-        else:
-            target = target[label]
+        target = target[label]
         if not target.shape:
             target = target.repeat(len(text))
         return {'text': text, 'target': target, 'loss_mask': loss_mask, 'position_id': position_id,
@@ -80,16 +78,14 @@ class MultiTaskDataset(torch.utils.data.Dataset):
             dataset_idx = rng.choice(np.arange(len(self.datasets)), p=self.weights)
             dataset = self.datasets[dataset_idx]
             sample_idx = rng.choice(np.arange(len(dataset)))
-            item = self.datasets[dataset_idx][sample_idx]
         else:
             dataset_idx = bisect_right(self.cumulative_lens, idx)
             if dataset_idx == 0:
                 sample_idx = idx
             else:
                 sample_idx = idx - self.cumulative_lens[dataset_idx - 1]
-            item = self.datasets[dataset_idx][sample_idx]
-        item = self.pet_wrapper(item)
-        return item
+        item = self.datasets[dataset_idx][sample_idx]
+        return self.pet_wrapper(item)
 
 
 class DataConfig:
@@ -118,9 +114,7 @@ class DataConfig:
 
 
 def prepare_tokenizer(args):
-    add_sentinel_token = 0
-    if args.sentinel_token:
-        add_sentinel_token = args.max_position_embeddings
+    add_sentinel_token = args.max_position_embeddings if args.sentinel_token else 0
     tokenizer = make_tokenizer(args.tokenizer_type, None, args.tokenizer_path, args.vocab_size,
                                args.tokenizer_model_type, add_block_symbols=args.block_lm, cache_dir=args.cache_dir,
                                add_sentinel_token=add_sentinel_token, add_task_mask=args.task_mask,
@@ -135,9 +129,10 @@ def prepare_tokenizer(args):
         multiple = args.make_vocab_size_divisible_by
         while (after % multiple) != 0:
             after += 1
-        print_rank_0('> padded vocab (size: {}) with {} dummy '
-                     'tokens (new size: {})'.format(before, after - before, after))
-        print_rank_0('> found end-of-document token: {}'.format(eod_token))
+        print_rank_0(
+            f'> padded vocab (size: {before}) with {after - before} dummy tokens (new size: {after})'
+        )
+        print_rank_0(f'> found end-of-document token: {eod_token}')
         token_counts = torch.cuda.LongTensor([after, eod_token])
     else:
         token_counts = torch.cuda.LongTensor([0, 0])
@@ -158,7 +153,6 @@ def make_data_loader(dataset, tokenizer, batch_size, num_iters, args, shuffle=Fa
         rank = rank // args.loader_scatter
         world_size = world_size // args.loader_scatter
         batch_size = batch_size // args.loader_scatter
-    distributed = world_size > 1
     if args.transformer_xl:
         batch_sampler = data_utils.samplers.DistributedSequentialSampler(len(dataset),
                                                                          num_iters,
@@ -171,9 +165,8 @@ def make_data_loader(dataset, tokenizer, batch_size, num_iters, args, shuffle=Fa
                                                         num_samples=batch_size * args.train_iters * args.gradient_accumulation_steps)
         else:
             sampler = torch.utils.data.SequentialSampler(dataset)
-        drop_last = distributed
-        # the GPUs in the same model parallel group receive the same data
-        if distributed:
+        distributed = world_size > 1
+        if drop_last := distributed:
             batch_sampler = data_utils.samplers.DistributedBatchSampler(sampler, batch_size, drop_last, rank,
                                                                         world_size,
                                                                         gradient_accumulation_steps=args.gradient_accumulation_steps)
@@ -199,13 +192,13 @@ def make_data_loader(dataset, tokenizer, batch_size, num_iters, args, shuffle=Fa
                                             encoder_decoder=args.encoder_decoder,
                                             task_mask=args.task_mask, random_position=args.random_position,
                                             masked_lm=args.masked_lm).construct_blocks
-    data_loader = torch.utils.data.DataLoader(dataset,
-                                              batch_sampler=batch_sampler,
-                                              num_workers=args.num_workers,
-                                              pin_memory=True,
-                                              collate_fn=collate_fn)
-
-    return data_loader
+    return torch.utils.data.DataLoader(
+        dataset,
+        batch_sampler=batch_sampler,
+        num_workers=args.num_workers,
+        pin_memory=True,
+        collate_fn=collate_fn,
+    )
 
 
 def make_tfrecord_loaders(args):
@@ -346,15 +339,15 @@ def make_loaders(args, tokenizer):
 
 
 def build_multi_task_dataset(args, tokenizer):
-    task_dirs = {"mnli": "MNLI", "cola": "CoLA", "mrpc": "MRPC", "qnli": "QNLI", "qqp": "QQP", "sst2": "SST-2",
-                 "agnews": "Agnews", "yelp-polarity": "yelp_review_polarity_csv", "yelp-full": "yelp_review_full_csv",
-                 "yahoo": "Yahoo", "squad": "SQuAD", "race": "RACE"}
     train, valid = None, None
     if mpu.get_model_parallel_rank() == 0:
         multi_seq_length = args.seq_length
         if args.multi_seq_length is not None:
             multi_seq_length = args.multi_seq_length
         train_datasets, valid_datasets = [], []
+        task_dirs = {"mnli": "MNLI", "cola": "CoLA", "mrpc": "MRPC", "qnli": "QNLI", "qqp": "QQP", "sst2": "SST-2",
+                     "agnews": "Agnews", "yelp-polarity": "yelp_review_polarity_csv", "yelp-full": "yelp_review_full_csv",
+                     "yahoo": "Yahoo", "squad": "SQuAD", "race": "RACE"}
         for task in args.multi_task_data:
             task = task.lower()
             data_dir = os.path.join(args.data_dir, task_dirs[task])

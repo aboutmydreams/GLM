@@ -35,7 +35,7 @@ with open(output_path, "w") as output:
                         for sentences in article_lines[1:]:
                             if len(sentences) > 1:
                                 if key:
-                                    if len(content) > 0 or len(contents) == 0:
+                                    if len(content) > 0 or not contents:
                                         key_sentences.append(key)
                                         contents.append(content)
                                     else:
@@ -49,7 +49,7 @@ with open(output_path, "w") as output:
                                 else:
                                     key = sentences[0]
                         if key:
-                            if len(content) > 0 or len(contents) == 0:
+                            if len(content) > 0 or not contents:
                                 key_sentences.append(key)
                                 contents.append(content)
                             else:
@@ -60,7 +60,6 @@ with open(output_path, "w") as output:
                         output.write("\n")
                         article_open = False
                         article_lines = []
-                    else:
-                        if article_open and line:
-                            sentences = segmenter.segment_string(line)
-                            article_lines.append(sentences)
+                    elif article_open and line:
+                        sentences = segmenter.segment_string(line)
+                        article_lines.append(sentences)

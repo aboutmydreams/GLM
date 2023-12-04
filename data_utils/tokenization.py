@@ -105,8 +105,6 @@ class Tokenization(object):
             elif idx == len(self.tokenization) - 1:
                 self.text += other.token
                 self.original_text += other.token
-        elif isinstance(other, Tokenization):
-            self.tokenization = self.tokenization[:idx] + other.tokenization + self.tokenization[idx:]
         else:
             self.tokenization = self.tokenization[:idx] + other.tokenization + self.tokenization[idx:]
 
@@ -353,8 +351,6 @@ class Tokenizer(object):
                 elif i == len(split_text) - 1:
                     if sub_text:
                         result.append(sub_text)
-                    else:
-                        pass
                 else:
                     if sub_text:
                         result.append(sub_text)
@@ -587,7 +583,7 @@ class CharacterLevelTokenizer(TextTokenizer):
         if process_fn is not None:
             processed_text = process_fn(processed_text)
         processed_text = str(processed_text)
-        tokens = [c for c in processed_text]
+        tokens = list(processed_text)
         return Tokenization(tokens, processed_text, text, asIds=False)
 
     def IdToToken(self, Id):
@@ -621,11 +617,7 @@ def get_corpus_freq(dataset, filepath, filetype='tsv'):
     MAX_SENTENCEPIECE_SENTENCES most common words to the file.
     """
     nltk.download('punkt', download_dir="./nltk")
-    if filetype == 'tsv':
-        delimiter = '\t'
-    else:
-        delimiter = ','
-
+    delimiter = '\t' if filetype == 'tsv' else ','
     print("compute corpus frequency\n", flush=True)
 
     total_sentence_count = 0
@@ -645,8 +637,8 @@ def get_corpus_freq(dataset, filepath, filetype='tsv'):
                         freqs[word] = 0
                     freqs[word] += 1
 
-    print("length of freqs before truncating " + str(len(freqs)), flush=True)
-    print("file path for freq " + str(filepath), flush=True)
+    print(f"length of freqs before truncating {len(freqs)}", flush=True)
+    print(f"file path for freq {str(filepath)}", flush=True)
 
     freqs_sorted = {}
     counter = 0
@@ -656,7 +648,7 @@ def get_corpus_freq(dataset, filepath, filetype='tsv'):
         counter += 1
         freqs_sorted[word] = count
 
-    print("length of freqs after trancating " + str(len(freqs_sorted)), flush=True)
+    print(f"length of freqs after trancating {len(freqs_sorted)}", flush=True)
 
     with open(filepath, 'w') as f:
         writer = csv.writer(f, delimiter=delimiter)
@@ -703,13 +695,13 @@ class SentencePieceTokenizer(TextTokenizer):
         dne = not os.path.exists(model_path)
         # check if path.model exists
         if dne and not model_path.endswith('.model'):
-            dne = not os.path.exists(model_path + '.model')
+            dne = not os.path.exists(f'{model_path}.model')
         return not dne
 
     def load_spm_model(self):
         """load sentencepiece model and parse vocab"""
         if not os.path.exists(self.spm_model) and not self.spm_model.endswith('.model'):
-            self.spm_model = self.spm_model + '.model'
+            self.spm_model = f'{self.spm_model}.model'
         self.sp = spm.SentencePieceProcessor()
         self.sp.Load(self.spm_model)
         self.vocab_size = self.num_text_tokens = len(self.sp)
@@ -725,24 +717,24 @@ class SentencePieceTokenizer(TextTokenizer):
             use_model_path = random_hash
         if use_model_path.endswith('.model'):
             use_model_path = use_model_path[:use_model_path.rfind('.model')]
-        input_path = use_model_path + '.tsv.' + random_hash
+        input_path = f'{use_model_path}.tsv.{random_hash}'
         line_count, maxlenline = get_corpus_freq(corpus, input_path)
         line_count = min(line_count, MAX_SENTENCEPIECE_SENTENCES)
         print('line count used as input_sentence_size ', line_count, flush=True)
         print('training sentencepiece model', flush=True)
         train_string = '--input={file_path} --model_prefix={model_prefix} --vocab_size={vocab_size}' \
-                       + ' --model_type={model_type} --character_coverage={character_coverage} ' \
-                       + '--input_sentence_size={input_sentence_size} ' \
-                       + '--input_format=tsv'
+                           + ' --model_type={model_type} --character_coverage={character_coverage} ' \
+                           + '--input_sentence_size={input_sentence_size} ' \
+                           + '--input_format=tsv'
         train_string = train_string.format(file_path=input_path, model_prefix=use_model_path,
                                            vocab_size=num_text_tokens,
                                            model_type=self.model_type, character_coverage=self.character_coverage,
                                            input_sentence_size=int(line_count))  # , #)#,
-        print("calling spm.SentencePieceTrainer.Train(%s)" % (train_string), flush=True)
+        print(f"calling spm.SentencePieceTrainer.Train({train_string})", flush=True)
         spm.SentencePieceTrainer.Train(train_string)
         os.remove(input_path)
-        self.spm_model = use_model_path + '.model'
-        print('sentencepiece model written to ' + self.spm_model, flush=True)
+        self.spm_model = f'{use_model_path}.model'
+        print(f'sentencepiece model written to {self.spm_model}', flush=True)
 
     def EncodeAsIds(self, text, process_fn=None):
         """convert text to sentencepiece Ids"""
@@ -794,7 +786,10 @@ class BertWordPieceTokenizer(Tokenizer):
             tokenizer_model_type = 'bert-large-uncased'
         if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
             print('loading BertWordPieceTokenizer (', tokenizer_model_type, ') from cache_dir ', cache_dir)
-        do_lower_case = not ('-cased' in tokenizer_model_type or 'chinese' in tokenizer_model_type)
+        do_lower_case = (
+            '-cased' not in tokenizer_model_type
+            and 'chinese' not in tokenizer_model_type
+        )
         self.text_tokenizer = BertTokenizer.from_pretrained(tokenizer_model_type, do_lower_case=do_lower_case,
                                                             cache_dir=cache_dir)
         if not torch.distributed.is_initialized() or torch.distributed.get_rank() == 0:
@@ -858,10 +853,10 @@ class BertWordPieceTokenizer(Tokenizer):
         # parse tokens and vocabs from tokenizer
 
         self._tokens = list(self.text_tokenizer.vocab.keys())
-        self._vocab = {k: v for k, v in self.text_tokenizer.vocab.items()}
+        self._vocab = dict(self.text_tokenizer.vocab.items())
 
         self._text_tokens = list(self._tokens)
-        self._text_token_vocab = {k: v for k, v in self.text_tokenizer.vocab.items()}
+        self._text_token_vocab = dict(self.text_tokenizer.vocab.items())
 
         self._command_token_tokens = list(self.command_token_map.keys())
         self._command_token_vocab = {t: Id for Id, t in self.command_id_map.items()}
@@ -871,8 +866,7 @@ class BertWordPieceTokenizer(Tokenizer):
 
     def _encode(self, text):
         tokens = self.text_tokenizer.tokenize(text)
-        ids = self.text_tokenizer.convert_tokens_to_ids(tokens)
-        return ids
+        return self.text_tokenizer.convert_tokens_to_ids(tokens)
 
     def EncodeAsTokens(self, text, process_fn=None):
         """convert wordpiece token to Id"""
@@ -915,7 +909,7 @@ class BertWordPieceTokenizer(Tokenizer):
                 Tokens.append(self.text_tokenizer.ids_to_tokens[Id])
         new_tokens = []
         for token in Tokens:
-            if token.startswith('##') and len(new_tokens) > 0:
+            if token.startswith('##') and new_tokens:
                 new_tokens[-1] += token[2:]
             else:
                 new_tokens.append(token)
@@ -1003,10 +997,10 @@ class GPT2BPETokenizer(Tokenizer):
         self.type_id_map = {tok.Id: tok for tok in self.type_tokens}
 
         self._tokens = list(self.text_tokenizer.encoder.keys())
-        self._vocab = {k: v for k, v in self.text_tokenizer.encoder.items()}
+        self._vocab = dict(self.text_tokenizer.encoder.items())
 
         self._text_tokens = list(self._tokens)
-        self._text_token_vocab = {k: v for k, v in self.text_tokenizer.encoder.items()}
+        self._text_token_vocab = dict(self.text_tokenizer.encoder.items())
 
         self._command_token_tokens = list(self.command_token_map.keys())
         self._command_token_vocab = {t: Id for Id, t in self.command_id_map.items()}
@@ -1045,8 +1039,6 @@ class GPT2BPETokenizer(Tokenizer):
                 elif i == len(split_text) - 1:
                     if sub_text:
                         result.append(sub_text)
-                    else:
-                        pass
                 else:
                     if sub_text:
                         result.append(sub_text)
@@ -1095,7 +1087,7 @@ class GPT2BPETokenizer(Tokenizer):
         tokens = []
         for token in re.findall(self.text_tokenizer.pat, processed_text):
             token = ''.join(self.text_tokenizer.bye_encoder[b] for b in token.encode('utf-8'))
-            tokens.extend(bpe_token for bpe_token in self.text_tokenizer.bpe(token).split(' '))
+            tokens.extend(iter(self.text_tokenizer.bpe(token).split(' ')))
         tokenization = Tokenization(tokens, processed_text, text, asIds=False)
         tokenization.set_command_tokens(self._command_tokens)
         return tokenization
@@ -1159,10 +1151,7 @@ class ChineseSPTokenizer(Tokenizer):
                 CommandToken('sop', '<|startofpiece|>', self.num_tokens + 1),
                 CommandToken('eop', '<|endofpiece|>', self.num_tokens + 2)
             ])
-            if fix_command_token:
-                self.num_tokens += 3
-            else:
-                self.num_tokens += 2
+            self.num_tokens += 3 if fix_command_token else 2
             self.num_command_tokens += 2
             if add_task_mask:
                 if fix_command_token:
@@ -1208,8 +1197,7 @@ class ChineseSPTokenizer(Tokenizer):
         self._token_type_vocab = {t: Id for Id, t in self.type_id_map.items()}
 
     def _encode(self, text):
-        ids = self.text_tokenizer.encode(text)
-        return ids
+        return self.text_tokenizer.encode(text)
 
     def EncodeAsTokens(self, text, process_fn=None):
         processed_text = text
@@ -1250,8 +1238,7 @@ class ChineseSPTokenizer(Tokenizer):
         last = 0
         for i, token_id in enumerate(Ids):
             if token_id in self.command_id_map:
-                pieces.append(Ids[last: i])
-                pieces.append(token_id)
+                pieces.extend((Ids[last: i], token_id))
                 last = i + 1
         pieces.append(Ids[last:])
         text = ""

@@ -67,7 +67,11 @@ def lm_forward_step(data, model, args, timers, mems, eval_metric=None):
                 token = global_tokenizer.IdToToken(token)
                 if token.startswith('[MASK'):
                     token = f"[{position_ids_[batch_id, i].item()}, {token}]"
-                if token.startswith('##') and len(output_tokens) > 0 and not output_tokens[-1].endswith(']'):
+                if (
+                    token.startswith('##')
+                    and output_tokens
+                    and not output_tokens[-1].endswith(']')
+                ):
                     output_tokens[-1] += token[2:]
                 else:
                     output_tokens.append(token)
@@ -94,7 +98,7 @@ def lm_forward_step(data, model, args, timers, mems, eval_metric=None):
         logits, *mems = model(tokens, position_ids, attention_mask, *mems, prompt_pos=prompt_pos)
     else:
         logits, *mems = model(tokens, position_ids, attention_mask, *mems)
-        
+
     if eval_metric is None or eval_metric == 'loss':
         losses = mpu.vocab_parallel_cross_entropy(logits.contiguous().float(), labels)
         loss_mask = loss_mask.view(-1)
@@ -103,7 +107,7 @@ def lm_forward_step(data, model, args, timers, mems, eval_metric=None):
         if eval_metric is None:
             loss = loss / loss_mask.sum()
         return loss, mems, 'bert'
-    elif eval_metric == 'accuracy' or eval_metric == 'classify':
+    elif eval_metric in ['accuracy', 'classify']:
         logits = mpu.gather_from_model_parallel_region(logits)
         outputs = torch.argmax(logits, -1)
         correct = (outputs == labels).float()
@@ -123,7 +127,7 @@ def classify_evaluate(model, dataloader, example_dict, args):
     predictions, labels, examples = [], [], []
     with torch.no_grad():
         # For all the batches in the dataset.
-        for iteration, batch in enumerate(dataloader):
+        for batch in dataloader:
             # Forward evaluation.
             output, _, _ = lm_forward_step(batch, model, args, None, [], eval_metric='classify')
             uid_list = batch['uid']
@@ -145,7 +149,7 @@ def evaluate(model, dataloader, eval_metric, args):
         # For all the batches in the dataset.
         for iteration, batch in enumerate(dataloader):
             if (iteration + 1) % args.log_interval == 0:
-                print_rank_0('> working on iteration: {}'.format(iteration))
+                print_rank_0(f'> working on iteration: {iteration}')
             # Forward evaluation.
             output, _, _ = lm_forward_step(batch, model, args, None, [], eval_metric=eval_metric)
             count = batch['text'].size(0)
@@ -177,20 +181,21 @@ def evaluate_and_print_results(data_loader, model, eval_metric, args):
         string += 'avg loss: {:.4E} | '.format(val_loss)
         string += 'ppl: {:.4E} | '.format(ppl)
         string += 'adjusted ppl: {:.4E} | '.format(adjusted_ppl)
-        string += 'token ratio: {} |'.format(token_ratio)
+        string += f'token ratio: {token_ratio} |'
         score_dict = {"avg loss": val_loss, "ppl": ppl, "adjusted ppl": adjusted_ppl}
 
     elif eval_metric == 'accuracy':
         output = output['accuracy']
         num_examples = len(data_loader.dataset)
         acc = output / num_examples * 100
-        string += 'number correct: {} | '.format(output)
-        string += 'total examples: {} | '.format(num_examples)
+        string += f'number correct: {output} | '
+        string += f'total examples: {num_examples} | '
         string += 'avg accuracy: {:.2f}'.format(acc)
         score_dict = {"accuracy": acc}
     else:
-        raise NotImplementedError('evaluation method for {} metric is not '
-                                  'implemented yet.'.format(eval_metric))
+        raise NotImplementedError(
+            f'evaluation method for {eval_metric} metric is not implemented yet.'
+        )
 
     length = len(string) + 1
     print_rank_0('-' * length)

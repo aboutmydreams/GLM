@@ -87,10 +87,7 @@ class MultiChoiceDataset(Dataset):
         pretokenized_key = key + "_pretokenized"
         assert pretokenized_key in item
         if isinstance(item[pretokenized_key], list):
-            result = []
-            for raw in item[pretokenized_key]:
-                result.append(self.tokenizer.EncodeAsIds(raw))
-            return result
+            return [self.tokenizer.EncodeAsIds(raw) for raw in item[pretokenized_key]]
         else:
             return self.tokenizer.EncodeAsIds(item[pretokenized_key])
 
@@ -121,10 +118,15 @@ class MultiChoiceDataset(Dataset):
             sep_list.append(sep)
             target_list.append(target_ids)
             mask_list.append(loss_masks)
-        sample = build_sample(ids_list, positions=positions_list, masks=sep_list, label=label,
-                              logit_mask=mask_list, target=target_list,
-                              unique_id=item["idx"])
-        return sample
+        return build_sample(
+            ids_list,
+            positions=positions_list,
+            masks=sep_list,
+            label=label,
+            logit_mask=mask_list,
+            target=target_list,
+            unique_id=item["idx"],
+        )
 
 
 class SuperGlueDataset(Dataset):
@@ -162,11 +164,7 @@ class SuperGlueDataset(Dataset):
                 example.label = self.processor.get_labels()[0]
         else:
             raise ValueError(f"'split' must be one of {SPLIT_TYPES}, got '{split}' instead")
-        if split == TEST_SET:
-            self.labeled = False
-        else:
-            self.labeled = True
-
+        self.labeled = split != TEST_SET
         label_distribution = Counter(example.label for example in example_list)
         print_rank_0(
             f"Returning {len(example_list)} {split} examples with label dist.: {list(label_distribution.items())}")
@@ -177,12 +175,21 @@ class SuperGlueDataset(Dataset):
             if self.pattern_ensemble:
                 pattern_ids = PVPS[task_name].available_patterns()
                 self.pvps = []
-                for pattern_id in pattern_ids:
-                    self.pvps.append(PVPS[task_name](args, tokenizer, self.processor.get_labels(), seq_length,
-                                                     pattern_id=pattern_id, num_prompt_tokens=args.num_prompt_tokens,
-                                                     is_multi_token=args.multi_token,
-                                                     max_segment_length=args.segment_length,
-                                                     fast_decode=args.fast_decode, split=split))
+                self.pvps.extend(
+                    PVPS[task_name](
+                        args,
+                        tokenizer,
+                        self.processor.get_labels(),
+                        seq_length,
+                        pattern_id=pattern_id,
+                        num_prompt_tokens=args.num_prompt_tokens,
+                        is_multi_token=args.multi_token,
+                        max_segment_length=args.segment_length,
+                        fast_decode=args.fast_decode,
+                        split=split,
+                    )
+                    for pattern_id in pattern_ids
+                )
             else:
                 self.pvp = PVPS[task_name](args, tokenizer, self.processor.get_labels(), seq_length,
                                            pattern_id=args.pattern_id, num_prompt_tokens=args.num_prompt_tokens,
@@ -200,9 +207,7 @@ class SuperGlueDataset(Dataset):
         sample_idx = idx % len(self.example_list)
         example = self.example_list[sample_idx]
         if self.cloze_eval:
-            kwargs = {}
-            if self.pattern_text:
-                kwargs = {"labeled": True, "priming": True}
+            kwargs = {"labeled": True, "priming": True} if self.pattern_text else {}
             if self.pattern_ensemble:
                 pvp_idx = idx // len(self.example_list)
                 sample = self.pvps[pvp_idx].encode(example, **kwargs)
@@ -280,13 +285,23 @@ class DataProcessor(ABC):
         if example.label is not None:
             label = example.label
             label = self.get_labels().index(label)
-        if args.pretrained_bert:
-            sample = build_sample(ids, label=label, types=types, paddings=paddings,
-                                  unique_id=example.guid)
-        else:
-            sample = build_sample(ids, positions=position_ids, masks=sep, label=label,
-                                  unique_id=example.guid)
-        return sample
+        return (
+            build_sample(
+                ids,
+                label=label,
+                types=types,
+                paddings=paddings,
+                unique_id=example.guid,
+            )
+            if args.pretrained_bert
+            else build_sample(
+                ids,
+                positions=position_ids,
+                masks=sep,
+                label=label,
+                unique_id=example.guid,
+            )
+        )
 
 
 class SuperGLUEProcessor(DataProcessor):
@@ -336,7 +351,7 @@ class RteProcessor(SuperGLUEProcessor):
                     except ValueError:
                         idx = line_idx
                 label = example_json.get('label')
-                guid = "%s-%s" % (set_type, idx)
+                guid = f"{set_type}-{idx}"
                 text_a = punctuation_standardization(example_json[premise_name])
                 text_b = punctuation_standardization(example_json[hypothesis_name])
 
@@ -392,7 +407,7 @@ class WicProcessor(SuperGLUEProcessor):
                 if isinstance(idx, str):
                     idx = int(idx)
                 label = "true" if example_json.get('label') else "false"
-                guid = "%s-%s" % (set_type, idx)
+                guid = f"{set_type}-{idx}"
                 text_a = punctuation_standardization(example_json['sentence1'])
                 text_b = punctuation_standardization(example_json['sentence2'])
                 meta = {'word': example_json['word']}
@@ -437,7 +452,7 @@ class WscProcessor(SuperGLUEProcessor):
                 example_json = json.loads(line)
                 idx = example_json['idx']
                 label = str(example_json['label']) if 'label' in example_json else None
-                guid = "%s-%s" % (set_type, idx)
+                guid = f"{set_type}-{idx}"
                 text_a = punctuation_standardization(example_json['text'])
                 meta = {
                     'span1_text': example_json['target']['span1_text'],
@@ -447,11 +462,11 @@ class WscProcessor(SuperGLUEProcessor):
                 }
                 if 'candidates' in example_json:
                     candidates = [cand['text'] for cand in example_json['candidates']]
-                    # candidates = list(set(candidates))
-                    filtered = []
-                    for i, cand in enumerate(candidates):
-                        if not cand in candidates[:i]:
-                            filtered.append(cand)
+                    filtered = [
+                        cand
+                        for i, cand in enumerate(candidates)
+                        if cand not in candidates[:i]
+                    ]
                     candidates = filtered
 
                 # the indices in the dataset are wrong for some examples, so we manually fix them
@@ -476,13 +491,13 @@ class WscProcessor(SuperGLUEProcessor):
                         if words_a[span2_index + offset] == span2_text:
                             span2_index += offset
 
-                    if words_a[span2_index] != span2_text and words_a[span2_index].startswith(span2_text):
-                        words_a = words_a[:span2_index] \
+                if words_a[span2_index] != span2_text and words_a[span2_index].startswith(span2_text):
+                    words_a = words_a[:span2_index] \
                                   + [words_a[span2_index][:len(span2_text)], words_a[span2_index][len(span2_text):]] \
                                   + words_a[span2_index + 1:]
 
                 assert words_a[span2_index] == span2_text, \
-                    f"Got '{words_a[span2_index]}' but expected '{span2_text}' at index {span2_index} for '{words_a}'"
+                        f"Got '{words_a[span2_index]}' but expected '{span2_text}' at index {span2_index} for '{words_a}'"
 
                 text_a = ' '.join(words_a)
                 meta['span1_index'], meta['span2_index'] = span1_index, span2_index
@@ -532,7 +547,7 @@ class BoolQProcessor(SuperGLUEProcessor):
                 example_json = json.loads(line)
                 idx = example_json['idx']
                 label = str(example_json['label']).lower() if 'label' in example_json else None
-                guid = "%s-%s" % (set_type, idx)
+                guid = f"{set_type}-{idx}"
                 text_a = punctuation_standardization(example_json['passage'])
                 text_b = punctuation_standardization(example_json['question'])
                 example = InputExample(guid=guid, text_a=text_a, text_b=text_b, label=label, idx=idx)
@@ -566,25 +581,34 @@ class CopaProcessor(SuperGLUEProcessor):
             data = build_input_from_ids(tokens_a, tokens_b, None, seq_length, tokenizer, args,
                                         add_cls=True, add_sep=True, add_piece=False)
             ids, types, paddings, position_ids, sep, target_ids, loss_masks = data
+            ids_list.append(ids)
             if args.pretrained_bert:
-                ids_list.append(ids)
                 types_list.append(types)
                 paddings_list.append(paddings)
             else:
-                ids_list.append(ids)
                 positions_list.append(position_ids)
                 sep_list.append(sep)
         label = 0
         if example.label is not None:
             label = example.label
             label = self.get_labels().index(label)
-        if args.pretrained_bert:
-            sample = build_sample(ids_list, label=label, types=types_list, paddings=paddings_list,
-                                  unique_id=example.guid)
-        else:
-            sample = build_sample(ids_list, positions=positions_list, masks=sep_list, label=label,
-                                  unique_id=example.guid)
-        return sample
+        return (
+            build_sample(
+                ids_list,
+                label=label,
+                types=types_list,
+                paddings=paddings_list,
+                unique_id=example.guid,
+            )
+            if args.pretrained_bert
+            else build_sample(
+                ids_list,
+                positions=positions_list,
+                masks=sep_list,
+                label=label,
+                unique_id=example.guid,
+            )
+        )
 
     @staticmethod
     def _create_examples(path: str, set_type: str) -> List[InputExample]:
@@ -595,7 +619,7 @@ class CopaProcessor(SuperGLUEProcessor):
                 example_json = json.loads(line)
                 label = example_json['label'] if 'label' in example_json else None
                 idx = example_json['idx']
-                guid = "%s-%s" % (set_type, idx)
+                guid = f"{set_type}-{idx}"
                 text_a = example_json['premise']
                 meta = {
                     'choice1': example_json['choice1'],
@@ -605,7 +629,7 @@ class CopaProcessor(SuperGLUEProcessor):
                 example = InputExample(guid=guid, text_a=text_a, label=label, meta=meta, idx=idx)
                 examples.append(example)
 
-        if set_type == 'train' or set_type == 'unlabeled':
+        if set_type in {'train', 'unlabeled'}:
             mirror_examples = []
             for ex in examples:
                 label = 1 if ex.label == 0 else 0
@@ -656,7 +680,7 @@ class MultiRcProcessor(SuperGLUEProcessor):
                         example = InputExample(guid=guid, text_a=text, text_b=question, label=label, meta=meta, idx=idx)
                         examples.append(example)
 
-        question_indices = list(set(example.meta['question_idx'] for example in examples))
+        question_indices = list({example.meta['question_idx'] for example in examples})
         label_distribution = Counter(example.label for example in examples)
         print_rank_0(
             f"Returning {len(examples)} examples corresponding to {len(question_indices)} questions with label "
@@ -784,23 +808,32 @@ class RecordProcessor(SuperGLUEProcessor):
             data = build_input_from_ids(tokens_a, tokens_b + answer_ids, None, seq_length, tokenizer, args,
                                         add_cls=True, add_sep=True, add_piece=False)
             ids, types, paddings, position_ids, sep, target_ids, loss_masks = data
+            ids_list.append(ids)
             if args.pretrained_bert:
-                ids_list.append(ids)
                 types_list.append(types)
                 paddings_list.append(paddings)
             else:
-                ids_list.append(ids)
                 positions_list.append(position_ids)
                 sep_list.append(sep)
         label = example.label
         label = self.get_labels().index(label)
-        if args.pretrained_bert:
-            sample = build_sample(ids_list, label=label, types=types_list, paddings=paddings_list,
-                                  unique_id=example.guid)
-        else:
-            sample = build_sample(ids_list, positions=positions_list, masks=sep_list, label=label,
-                                  unique_id=example.guid)
-        return sample
+        return (
+            build_sample(
+                ids_list,
+                label=label,
+                types=types_list,
+                paddings=paddings_list,
+                unique_id=example.guid,
+            )
+            if args.pretrained_bert
+            else build_sample(
+                ids_list,
+                positions=positions_list,
+                masks=sep_list,
+                label=label,
+                unique_id=example.guid,
+            )
+        )
 
     @staticmethod
     def _create_examples(path, set_type, seed=42, max_train_candidates_per_question: int = 10, for_train=False) -> List[
@@ -823,9 +856,7 @@ class RecordProcessor(SuperGLUEProcessor):
                     entity = punctuation_standardization(text[start:end + 1])
                     entities.add(entity)
 
-                entities = list(entities)
-                entities.sort()
-
+                entities = sorted(entities)
                 text = text.replace("@highlight\n", "- ")  # we follow the GPT-3 paper wrt @highlight annotations
                 questions = example_json['qas']
 
@@ -873,7 +904,7 @@ class RecordProcessor(SuperGLUEProcessor):
                                                idx=question_idx, num_choices=len(entities))
                         examples.append(example)
 
-        question_indices = list(set(example.meta['question_idx'] for example in examples))
+        question_indices = list({example.meta['question_idx'] for example in examples})
         label_distribution = Counter(example.label for example in examples)
         print_rank_0(
             f"Returning {len(examples)} examples corresponding to {len(question_indices)} questions with label "
@@ -1017,7 +1048,7 @@ class AgnewsProcessor(DataProcessor):
             reader = csv.reader(f, delimiter=',')
             for idx, row in enumerate(reader):
                 label, headline, body = row
-                guid = "%s-%s" % (set_type, idx)
+                guid = f"{set_type}-{idx}"
                 text_a = punctuation_standardization(headline.replace('\\', ' '))
                 text_b = punctuation_standardization(body.replace('\\', ' '))
 
@@ -1053,7 +1084,7 @@ class YahooAnswersProcessor(DataProcessor):
             reader = csv.reader(f, delimiter=',')
             for idx, row in enumerate(reader):
                 label, question_title, question_body, answer = row
-                guid = "%s-%s" % (set_type, idx)
+                guid = f"{set_type}-{idx}"
                 text_a = ' '.join([question_title.replace('\\n', ' ').replace('\\', ' '),
                                    question_body.replace('\\n', ' ').replace('\\', ' ')])
                 text_a = punctuation_standardization(text_a)
@@ -1092,7 +1123,7 @@ class YelpPolarityProcessor(DataProcessor):
             reader = csv.reader(f, delimiter=',')
             for idx, row in enumerate(reader):
                 label, body = row
-                guid = "%s-%s" % (set_type, idx)
+                guid = f"{set_type}-{idx}"
                 text_a = body.replace('\\n', ' ').replace('\\', ' ')
                 text_a = punctuation_standardization(text_a)
 
@@ -1118,7 +1149,7 @@ class XStanceProcessor(DataProcessor):
     def __init__(self, args, language: str = None):
         super().__init__(args)
         if language is not None:
-            assert language in ['de', 'fr']
+            assert language in {'de', 'fr'}
         self.language = language
 
     def get_train_examples(self, data_dir):
@@ -1194,11 +1225,7 @@ class ColaProcessor(Sst2Processor):
     @staticmethod
     def _create_examples(path: str, set_type: str) -> List[InputExample]:
         examples = []
-        if set_type != 'test':
-            df = read_tsv(path, header=None)
-        else:
-            df = read_tsv(path)
-
+        df = read_tsv(path, header=None) if set_type != 'test' else read_tsv(path)
         for idx, row in df.iterrows():
             guid = f"{set_type}-{idx}"
             if set_type != 'test':
@@ -1293,14 +1320,11 @@ class SquadProcessor(DataProcessor):
         with open(path) as f:
             data = json.load(f)['data']
 
-        for idx, passage in enumerate(data):
-            for pid, paragraph in enumerate(passage['paragraphs']):
+        for passage in data:
+            for paragraph in passage['paragraphs']:
                 context = paragraph['context']
-                for qid, qas in enumerate(paragraph['qas']):
-                    if len(qas['answers']):
-                        answer = qas['answers'][0]
-                    else:
-                        answer = {'text': 'N/A'}
+                for qas in paragraph['qas']:
+                    answer = qas['answers'][0] if len(qas['answers']) else {'text': 'N/A'}
                     guid = qas['id']
                     example = InputExample(guid=guid, text_a=context, text_b=qas['question'], label='0',
                                            meta={'answer': answer, 'answers': qas['answers']})
@@ -1375,7 +1399,7 @@ class CLUEWSCProcessor(DataProcessor):
                 example_json = json.loads(line)
                 idx = example_json['id'] if 'id' in example_json else example_json['idx']
                 label = example_json['label'] if 'label' in example_json else None
-                guid = "%s-%s" % (set_type, idx)
+                guid = f"{set_type}-{idx}"
                 text_a = example_json['text']
 
                 meta = {
@@ -1416,14 +1440,12 @@ class CMRCProcessor(DataProcessor):
 
         for data in data_list:
             idx = data["context_id"]
-            if set_type == "train":
-                idx = int(idx[6:])
-            elif set_type == "dev":
+            if set_type == "dev":
                 idx = int(idx[4:])
-            elif set_type == "test":
+            elif set_type in {"train", "test"}:
                 idx = int(idx[6:])
             else:
-                raise NotImplementedError("set_type="+str(set_type))
+                raise NotImplementedError(f"set_type={set_type}")
             text_a = data["context_text"]
             qa_set = data["qas"]
 

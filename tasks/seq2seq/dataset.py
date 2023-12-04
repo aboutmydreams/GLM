@@ -73,10 +73,10 @@ class SummmaryProcessor:
         else:
             raise NotImplementedError(split)
         print_rank_0(f"Creating {self.task}-{split} dataset from {self.data_dir}")
-        if self.task == "gigaword":
-            detokenizer = gigaword_detokenize
-        elif self.task == "cnn_dm":
+        if self.task == "cnn_dm":
             detokenizer = cnndm_detokenize
+        elif self.task == "gigaword":
+            detokenizer = gigaword_detokenize
         else:
             detokenizer = None
         source_texts, target_texts = [], []
@@ -97,7 +97,7 @@ class SummmaryProcessor:
         for idx, (source_text, target_text) in enumerate(zip(source_texts, target_texts)):
             if (idx + 1) % 20000 == 0:
                 print_rank_0(f"Complete {idx + 1} examples")
-            guid = "%s-%s" % (split, idx)
+            guid = f"{split}-{idx}"
             meta = {"ref": self.tokenizer.DecodeIds(self.tokenizer.EncodeAsIds(target_text).tokenization)}
             example = InputExample(guid=guid, text_a=source_text, text_b=target_text, meta=meta)
             if idx < 10:
@@ -131,7 +131,7 @@ class CMRCProcessor:
                         question = qa["question"]
                         answers = {answer['text'] for answer in qa["answers"]} if split != 'test' else {"FAKE_ANSWER"}
                         for answer in answers:
-                            guid = "%s-%s" % (split, idx)
+                            guid = f"{split}-{idx}"
                             meta = {
                                 "answer": answer,
                                 "question": question,
@@ -172,7 +172,7 @@ class SQuADGenerationProcessor:
                         question = qa["question"]
                         answers = {answer['text'] for answer in qa["answers"]} if split != 'test' else {"FAKE_ANSWER"}
                         for answer in answers:
-                            guid = "%s-%s" % (split, idx)
+                            guid = f"{split}-{idx}"
                             meta = {
                                 "answer": answer,
                                 "question": question,
@@ -214,7 +214,7 @@ class SQuADProcessor:
                         answers = {answer["text"] for answer in qa["answers"]}
                         answer_starts = {answer["text"]: answer["answer_start"] for answer in qa["answers"]}
                         for answer in answers:
-                            guid = "%s-%s" % (split, idx)
+                            guid = f"{split}-{idx}"
                             meta = {
                                 "answer_start": answer_starts[answer],
                                 "answer": answer,
@@ -234,9 +234,7 @@ def generate_token_to_char_map(tokens, raw_text, tokenizer):
     # Use heuristics to construct the token to char mapping for BertTokenizer
 
     def _is_whitespace(c):
-        if c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F:
-            return True
-        return False
+        return c == " " or c == "\t" or c == "\r" or c == "\n" or ord(c) == 0x202F
 
     def _normalize(s):
         # if s in tokenizer.command_token_map:
@@ -292,9 +290,7 @@ class SQuADProcessor:
 
         if split == "train":
             filename = "train-v1.1.json" if self.task == "squad_v1" else "train-v2.0.json"
-        elif split == "dev":
-            filename = "dev-v1.1.json" if self.task == "squad_v1" else "dev-v2.0.json"
-        elif split == "test":
+        elif split in ["dev", "test"]:
             filename = "dev-v1.1.json" if self.task == "squad_v1" else "dev-v2.0.json"
         else:
             raise NotImplementedError(split)
@@ -322,7 +318,7 @@ class SQuADProcessor:
                     for qa in paragraph['qas']:
                         total_qas += 1
                         question = qa["question"]
-                        question_tokens = self.tokenizer.EncodeAsIds(" " + question).tokenization
+                        question_tokens = self.tokenizer.EncodeAsIds(f" {question}").tokenization
                         answers = [answer["text"] for answer in qa["answers"]]
                         if len(qa['answers']) == 0:
                             answers = ['N/A']
@@ -332,14 +328,14 @@ class SQuADProcessor:
                             new_context = self.tokenizer.DecodeIds(tokens)
                             answer = answers[0]
                             answer_tokens_text = self.tokenizer.DecodeIds(self.tokenizer.EncodeAsIds(answer).tokenization)
-                            if answer_tokens_text and answer_tokens_text in new_context:
-                                # new_context = new_context.replace(answer_tokens_text, answer)
-                                pass
-                            else:
+                            if (
+                                not answer_tokens_text
+                                or answer_tokens_text not in new_context
+                            ):
                                 answer = 'N/A'
                             if self.task == 'squad_v1' and answer == 'N/A':
                                 continue
-                            guid = "%s-%s" % (split, idx)
+                            guid = f"{split}-{idx}"
                             meta = {
                                 "context": context,
                                 "context_tokens": context_tokens,
@@ -386,19 +382,19 @@ class XSumProcessor:
                     line = line.strip()
                     if line.startswith("[SN]"):
                         if key is not None:
-                            if key == "RESTBODY":
-                                source_text = " ".join(sentences)
-                            elif key == "FIRST-SENTENCE":
+                            if key == "FIRST-SENTENCE":
                                 target_text = " ".join(sentences)
+                            elif key == "RESTBODY":
+                                source_text = " ".join(sentences)
                         key = line[4:-4]
                         sentences = []
                     elif line:
                         sentences.append(line)
                 if key is not None:
-                    if key == "RESTBODY":
-                        source_text = " ".join(sentences)
-                    elif key == "FIRST-SENTENCE":
+                    if key == "FIRST-SENTENCE":
                         target_text = " ".join(sentences)
+                    elif key == "RESTBODY":
+                        source_text = " ".join(sentences)
                 source_texts.append(source_text)
                 target_texts.append(target_text)
                 if (i + 1) % 1000 == 0:
@@ -408,7 +404,7 @@ class XSumProcessor:
         for idx, (source_text, target_text) in enumerate(zip(source_texts, target_texts)):
             if (idx + 1) % 20000 == 0:
                 print_rank_0(f"Complete {idx + 1} examples")
-            guid = "%s-%s" % (split, idx)
+            guid = f"{split}-{idx}"
             meta = {"ref": self.tokenizer.DecodeIds(self.tokenizer.EncodeAsIds(target_text).tokenization)}
             example = InputExample(guid=guid, text_a=source_text, text_b=target_text, meta=meta)
             if idx < 10:
@@ -456,7 +452,7 @@ class Seq2SeqDataset(torch.utils.data.Dataset):
         eop_id = self.tokenizer.get_command('eop').Id
         if self.task in ["gigaword", "cnn_dm", "cnn_dm_original", "xsum"]:
             source_text, target_text = example.text_a, example.text_b
-            source_tokens = self.tokenizer.EncodeAsIds(" " + source_text).tokenization
+            source_tokens = self.tokenizer.EncodeAsIds(f" {source_text}").tokenization
             prompt = [cls_id, mask_id] + self.tokenizer.EncodeAsIds(" Content:").tokenization
             if len(source_tokens) > self.max_src_length - len(prompt):
                 source_tokens = source_tokens[:self.max_src_length - len(prompt)]
@@ -464,11 +460,13 @@ class Seq2SeqDataset(torch.utils.data.Dataset):
         elif self.task == "squad_generation":
             source_text = example.text_a
             target_text, answer = example.meta["question"], example.meta["answer"]
-            source_tokens = self.tokenizer.EncodeAsIds(source_text.rstrip() + " Question:").tokenization
-            answer_tokens = self.tokenizer.EncodeAsIds(" Answer: " + answer).tokenization
+            source_tokens = self.tokenizer.EncodeAsIds(
+                f"{source_text.rstrip()} Question:"
+            ).tokenization
+            answer_tokens = self.tokenizer.EncodeAsIds(f" Answer: {answer}").tokenization
             if len(source_tokens) > self.max_src_length - len(answer_tokens) - 2:
                 max_src_length = self.max_src_length - len(answer_tokens) - 2
-                answer_pattern = self.tokenizer.EncodeAsIds(" " + answer).tokenization
+                answer_pattern = self.tokenizer.EncodeAsIds(f" {answer}").tokenization
 
                 def sub_finder(mylist, pattern):
                     matches = []
@@ -489,8 +487,10 @@ class Seq2SeqDataset(torch.utils.data.Dataset):
             source_text = example.text_a
             target_text = example.meta["answer"].strip()
             question = example.meta["question"].strip()
-            source_tokens = self.tokenizer.EncodeAsIds(" " + source_text.rstrip()).tokenization
-            question_tokens = self.tokenizer.EncodeAsIds(" " + question).tokenization
+            source_tokens = self.tokenizer.EncodeAsIds(
+                f" {source_text.rstrip()}"
+            ).tokenization
+            question_tokens = self.tokenizer.EncodeAsIds(f" {question}").tokenization
             period_id = self.tokenizer.TokenToId('.')
             max_src_length = self.max_src_length - len(question_tokens) - 3
             if max_src_length <= 0:
@@ -503,7 +503,7 @@ class Seq2SeqDataset(torch.utils.data.Dataset):
             target_text = example.meta["answer"].strip()
             question = example.meta["question"].strip()
             source_tokens = self.tokenizer.EncodeAsIds(source_text.rstrip()).tokenization
-            question_tokens = self.tokenizer.EncodeAsIds("问题：" + question + "答案：").tokenization
+            question_tokens = self.tokenizer.EncodeAsIds(f"问题：{question}答案：").tokenization
             max_src_length = self.max_src_length - len(question_tokens) - 2
             if max_src_length <= 0:
                 print(question)
@@ -518,7 +518,7 @@ class Seq2SeqDataset(torch.utils.data.Dataset):
         block_position_ids = [0] * len(source_tokens)
         mask_pos = source_tokens.index(mask_id)
         if self.split == 'train':
-            target_tokens = self.tokenizer.EncodeAsIds(" " + target_text).tokenization
+            target_tokens = self.tokenizer.EncodeAsIds(f" {target_text}").tokenization
             target_tokens = target_tokens + [eop_id]
             if len(target_tokens) > self.max_tgt_length:
                 target_tokens = target_tokens[:self.max_tgt_length]
@@ -542,7 +542,7 @@ class Seq2SeqDataset(torch.utils.data.Dataset):
                       "position_id": np.array(position_ids, dtype=np.int64), "uid": example.guid}
         else:
             tokens = source_tokens + [sop_id]
-            position_ids = position_ids + [mask_pos]
+            position_ids += [mask_pos]
             block_position_ids = block_position_ids + [1]
             position_ids = [position_ids, block_position_ids]
             sample = {'text': np.array(tokens, dtype=np.int64), 'attention_mask': np.array(sep, dtype=np.int64),
@@ -581,7 +581,7 @@ class ExtractionDataset(torch.utils.data.Dataset):
         for idx, (source_text, target_text) in enumerate(zip(source_texts, target_texts)):
             if (idx + 1) % 20000 == 0:
                 print_rank_0(f"Complete {idx + 1} examples")
-            guid = "%s-%s" % (split, idx)
+            guid = f"{split}-{idx}"
             meta = {"ref": target_text}
             example = InputExample(guid=guid, text_a=source_text, text_b=target_text, meta=meta)
             self.examples[guid] = example
@@ -621,7 +621,7 @@ class ExtractionDataset(torch.utils.data.Dataset):
             loss_mask = [0] * len(source_tokens)
             for i, mask_pos in enumerate(mask_positions):
                 tgt_text = masked_tgt[i]
-                tgt_tokens = self.tokenizer.EncodeAsIds(" " + tgt_text).tokenization
+                tgt_tokens = self.tokenizer.EncodeAsIds(f" {tgt_text}").tokenization
                 tokens += [sop_id] + tgt_tokens
                 target_ids += tgt_tokens + [eop_id]
                 loss_mask += [1] * (len(tgt_tokens) + 1)
@@ -640,7 +640,7 @@ class ExtractionDataset(torch.utils.data.Dataset):
         else:
             tokens = source_tokens + [sop_id]
             mask_pos = source_tokens.index(mask_id)
-            position_ids = position_ids + [mask_pos]
+            position_ids += [mask_pos]
             block_position_ids = block_position_ids + [1]
             position_ids = [position_ids, block_position_ids]
             sample = {'text': np.array(tokens, dtype=np.int64), 'attention_mask': np.array(sep, dtype=np.int64),
@@ -688,7 +688,7 @@ class BlankLMDataset(torch.utils.data.Dataset):
             #     break
             if (idx + 1) % 20000 == 0:
                 print_rank_0(f"Complete {idx + 1} examples")
-            guid = "%s-%s" % (split, idx)
+            guid = f"{split}-{idx}"
             meta = {"ref": target_text}
             example = InputExample(guid=guid, text_a=source_text, text_b=target_text, meta=meta)
             self.examples[guid] = example
@@ -718,7 +718,7 @@ class BlankLMDataset(torch.utils.data.Dataset):
                 text = text + [pad_id] * (max_len - len(text))
             return text
 
-        source_tokens = self.tokenizer.EncodeAsIds(" " + source_text).tokenization
+        source_tokens = self.tokenizer.EncodeAsIds(f" {source_text}").tokenization
         source_tokens = pad_to(source_tokens, self.max_src_length, pad_id)
         sep = len(source_tokens)
         position_ids = list(range(len(source_tokens)))
@@ -731,7 +731,7 @@ class BlankLMDataset(torch.utils.data.Dataset):
             loss_mask = [0] * len(source_tokens)
             for i, mask_pos in enumerate(mask_positions):
                 tgt_text = masked_tgt[i]
-                tgt_tokens = self.tokenizer.EncodeAsIds(" " + tgt_text).tokenization
+                tgt_tokens = self.tokenizer.EncodeAsIds(f" {tgt_text}").tokenization
                 tokens += [sop_id] + tgt_tokens
                 target_ids += tgt_tokens + [eop_id]
                 loss_mask += [1] * (len(tgt_tokens) + 1)
@@ -751,7 +751,7 @@ class BlankLMDataset(torch.utils.data.Dataset):
         else:
             tokens = source_tokens + [sop_id]
             mask_pos = source_tokens.index(mask_id)
-            position_ids = position_ids + [mask_pos]
+            position_ids += [mask_pos]
             block_position_ids = block_position_ids + [1]
             position_ids = [position_ids, block_position_ids]
             sample = {'text': np.array(tokens, dtype=np.int64), 'attention_mask': np.array(sep, dtype=np.int64),
@@ -767,12 +767,12 @@ class BlankLMDataset(torch.utils.data.Dataset):
         for i, idx in enumerate(indices):
             if i == 0 or idx != indices[i - 1] + 1:
                 masked_tgt.append("")
-            masked_tgt[-1] += " " + tokens[idx]
+            masked_tgt[-1] += f" {tokens[idx]}"
             tokens[idx] = "[MASK]"
         for i, token in enumerate(tokens):
             if i != 0 and token == "[MASK]" and tokens[i - 1] == "[MASK]":
                 continue
-            masked_src += " " + token
+            masked_src += f" {token}"
         return masked_src, masked_tgt
 
 
@@ -809,7 +809,7 @@ class CustomizationDataset(torch.utils.data.Dataset):
         for idx, (source_text, target_text) in enumerate(zip(source_texts, target_texts)):
             if (idx + 1) % 20000 == 0:
                 print_rank_0(f"Complete {idx + 1} examples")
-            guid = "%s-%s" % (split, idx)
+            guid = f"{split}-{idx}"
             meta = {"ref": target_text}
             example = InputExample(guid=guid, text_a=source_text, text_b=target_text, meta=meta)
             self.examples[guid] = example
@@ -841,7 +841,7 @@ class CustomizationDataset(torch.utils.data.Dataset):
         block_position_ids = [0] * len(source_tokens)
         mask_pos = source_tokens.index(mask_id)
         if self.split == 'train':
-            target_tokens = self.tokenizer.EncodeAsIds(" " + target_text).tokenization
+            target_tokens = self.tokenizer.EncodeAsIds(f" {target_text}").tokenization
             target_tokens = target_tokens + [eop_id]
             if len(target_tokens) > self.max_tgt_length:
                 target_tokens = target_tokens[:self.max_tgt_length]
@@ -862,18 +862,23 @@ class CustomizationDataset(torch.utils.data.Dataset):
             loss_mask = [0] * len(source_tokens) + loss_mask
             target_ids = [0] * len(source_tokens) + target_tokens
             position_ids += [mask_pos] * len(target_tokens)
-            if self.no_block_position:
-                block_position_ids += [1] * len(target_tokens)
-            else:
-                block_position_ids += list(range(1, len(target_tokens) + 1))
+            block_position_ids += (
+                [1] * len(target_tokens)
+                if self.no_block_position
+                else list(range(1, len(target_tokens) + 1))
+            )
             position_ids = [position_ids, block_position_ids]
-            sample = {'text': np.array(tokens, dtype=np.int64), 'target': np.array(target_ids, dtype=np.int64),
-                      'attention_mask': attention_mask,
-                      'loss_mask': np.array(loss_mask, dtype=np.int64),
-                      "position_id": np.array(position_ids, dtype=np.int64), "uid": example.guid}
+            return {
+                'text': np.array(tokens, dtype=np.int64),
+                'target': np.array(target_ids, dtype=np.int64),
+                'attention_mask': attention_mask,
+                'loss_mask': np.array(loss_mask, dtype=np.int64),
+                "position_id": np.array(position_ids, dtype=np.int64),
+                "uid": example.guid,
+            }
         else:
             tokens = source_tokens + [sop_id]
-            position_ids = position_ids + [mask_pos]
+            position_ids += [mask_pos]
             block_position_ids = block_position_ids + [1]
             position_ids = [position_ids, block_position_ids]
             if self.mask_pad_token:
@@ -883,6 +888,9 @@ class CustomizationDataset(torch.utils.data.Dataset):
                 attention_mask = attention_mask[None, :, :]
             else:
                 attention_mask = np.array(sep, dtype=np.int64)
-            sample = {'text': np.array(tokens, dtype=np.int64), 'attention_mask': attention_mask,
-                      "position_id": np.array(position_ids, dtype=np.int64), "uid": example.guid}
-        return sample
+            return {
+                'text': np.array(tokens, dtype=np.int64),
+                'attention_mask': attention_mask,
+                "position_id": np.array(position_ids, dtype=np.int64),
+                "uid": example.guid,
+            }

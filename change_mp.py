@@ -28,16 +28,16 @@ if target_mp == len(filenames):
     exit(0)
 
 if sys.argv[1][-1] == '/':
-    new_checkpoint = sys.argv[1][:-1] + '_MP' + sys.argv[2]
+    new_checkpoint = f'{sys.argv[1][:-1]}_MP{sys.argv[2]}'
 else:
-    new_checkpoint = sys.argv[1] + '_MP' + sys.argv[2]
+    new_checkpoint = f'{sys.argv[1]}_MP{sys.argv[2]}'
 if not os.path.exists(new_checkpoint):
     os.mkdir(new_checkpoint)
 if iteration is not None:
     with open(os.path.join(new_checkpoint, 'latest_checkpointed_iteration.txt'), 'w') as fout:
-        fout.write("{}\n".format(iteration))
+        fout.write(f"{iteration}\n")
     with open(os.path.join(new_checkpoint, 'latest'), 'w') as fout:
-        fout.write("{}\n".format(iteration))
+        fout.write(f"{iteration}\n")
     new_checkpoint = os.path.join(new_checkpoint, str(iteration))
     if not os.path.exists(new_checkpoint):
         os.mkdir(new_checkpoint)

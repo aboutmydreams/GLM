@@ -54,7 +54,7 @@ def get_dataset(name, tokenizer, pre_tokenize, data_parallel_rank, loader_scatte
     """gets dataset object based on keyword args and file at `path`"""
     global_rank = torch.distributed.get_rank()
     if not supported_corpus(name):
-        raise NotImplementedError('dataset %s is not supported' % name)
+        raise NotImplementedError(f'dataset {name} is not supported')
     dataset = corpora.NAMED_CORPORA[name]
     path = dataset.PATH
     if issubclass(dataset, corpora.PromptReader):
@@ -151,9 +151,12 @@ def get_dataset(name, tokenizer, pre_tokenize, data_parallel_rank, loader_scatte
         map_fn = (lambda x: x.tolist()) if pre_tokenize else None
         masks = LazyLoader(path, data_type='mask', map_fn=map_fn, mem_map=True, is_array=True)
         texts = LazyLoader(path, data_type='text', map_fn=map_fn, mem_map=True, is_array=pre_tokenize)
-        text = corpora.KeyDataset(mask_loader=masks, text_loader=texts, tokenizer=tokenizer,
-                                  to_tokenize=not pre_tokenize)
-        return text
+        return corpora.KeyDataset(
+            mask_loader=masks,
+            text_loader=texts,
+            tokenizer=tokenizer,
+            to_tokenize=not pre_tokenize,
+        )
 
 
 def supported_corpus(corpus_name):

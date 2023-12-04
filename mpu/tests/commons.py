@@ -51,8 +51,9 @@ def initialize_distributed(backend='nccl'):
     rank = int(os.getenv('RANK', '0'))
     world_size = int(os.getenv("WORLD_SIZE", '1'))
 
-    print('> initializing torch.distributed with local rank: {}, '
-          'rank: {}, world size: {}'.format(local_rank, rank, world_size))
+    print(
+        f'> initializing torch.distributed with local rank: {local_rank}, rank: {rank}, world size: {world_size}'
+    )
 
     # Set the device id.
     device = rank % torch.cuda.device_count()
@@ -64,7 +65,7 @@ def initialize_distributed(backend='nccl'):
     init_method = 'tcp://'
     master_ip = os.getenv('MASTER_ADDR', 'localhost')
     master_port = os.getenv('MASTER_PORT', '6000')
-    init_method += master_ip + ':' + master_port
+    init_method += f'{master_ip}:{master_port}'
     torch.distributed.init_process_group(
         backend=backend,
         world_size=world_size,
@@ -76,7 +77,7 @@ def print_separator(message):
     torch.distributed.barrier()
     filler_len = (78 - len(message)) // 2
     filler = '-' * filler_len
-    string = '\n' + filler + ' {} '.format(message) + filler
+    string = '\n' + filler + f' {message} ' + filler
     if torch.distributed.get_rank() == 0:
         print(string, flush=True)
     torch.distributed.barrier()

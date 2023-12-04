@@ -44,10 +44,7 @@ def _initialize_affine_weight(weight, output_size, input_size,
     world_size = get_model_parallel_world_size()
     if world_size == 1:
         init_method(weight)
-        if return_master_weight:
-            return weight
-        return None
-
+        return weight if return_master_weight else None
     # Initialize master weight
     master_weight = torch.empty(output_size, input_size,
                                 dtype=weight.dtype,
@@ -63,9 +60,7 @@ def _initialize_affine_weight(weight, output_size, input_size,
 
     with torch.no_grad():
         torch.cat(my_weight_list, dim=partition_dim, out=weight)
-    if return_master_weight:
-        return master_weight
-    return None
+    return master_weight if return_master_weight else None
 
 
 class VocabParallelEmbedding(torch.nn.Module):
@@ -111,7 +106,7 @@ class VocabParallelEmbedding(torch.nn.Module):
     def forward(self, input_):
         # Build the mask.
         input_mask = (input_ < self.vocab_start_index) | \
-                     (input_ >= self.vocab_end_index)
+                         (input_ >= self.vocab_end_index)
         # Mask the input.
         masked_input = input_.clone() - self.vocab_start_index
         masked_input[input_mask] = 0
@@ -122,9 +117,7 @@ class VocabParallelEmbedding(torch.nn.Module):
                                       self.sparse)
         # Mask the output embedding.
         output_parallel[input_mask, :] = 0.0
-        # Reduce across all the model parallel GPUs.
-        output = reduce_from_model_parallel_region(output_parallel)
-        return output
+        return reduce_from_model_parallel_region(output_parallel)
 
 
 class ParallelEmbedding(torch.nn.Module):
@@ -172,8 +165,7 @@ class ParallelEmbedding(torch.nn.Module):
                                       self.padding_idx, self.max_norm,
                                       self.norm_type, self.scale_grad_by_freq,
                                       self.sparse)
-        output = gather_from_model_parallel_region(output_parallel)
-        return output
+        return gather_from_model_parallel_region(output_parallel)
 
 
 class ColumnParallelLinear(torch.nn.Module):
@@ -235,12 +227,11 @@ class ColumnParallelLinear(torch.nn.Module):
         input_parallel = copy_to_model_parallel_region(input_)
         # Matrix multiply.
         output_parallel = F.linear(input_parallel, self.weight, self.bias)
-        if self.gather_output:
-            # All-gather across the partitions.
-            output = gather_from_model_parallel_region(output_parallel)
-        else:
-            output = output_parallel
-        return output
+        return (
+            gather_from_model_parallel_region(output_parallel)
+            if self.gather_output
+            else output_parallel
+        )
 
 
 class RowParallelLinear(torch.nn.Module):
@@ -313,9 +304,5 @@ class RowParallelLinear(torch.nn.Module):
         output_parallel = F.linear(input_parallel, self.weight)
         # All-reduce across all the partitions.
         output_ = reduce_from_model_parallel_region(output_parallel)
-        if self.bias is not None:
-            output = output_ + self.bias
-        else:
-            output = output_
-        return output
+        return output_ + self.bias if self.bias is not None else output_
 

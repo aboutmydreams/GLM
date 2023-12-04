@@ -146,7 +146,7 @@ def finetune_forward_step(batch, model, args, timers, mems):
             hinge_loss = 1 + logits - correct_logits.unsqueeze(1)
             hinge_loss[hinge_loss < 0.0] = 0.0
             loss = hinge_loss.sum(dim=1).mean() - 1.0
-        elif args.loss_func == "generative" or args.loss_func == "mix":
+        elif args.loss_func in ["generative", "mix"]:
             batch_size = logits.size(0)
             loss = - logits[range(batch_size), labels].mean()
             if args.loss_func == "mix":
@@ -209,7 +209,7 @@ def _train(model, optimizer, lr_scheduler, forward_step,
     # For each remaining epoch
     timers('interval time').start()
     for epoch in range(start_epoch, args.epochs):
-        print_rank_0('working on epoch {} ...'.format(epoch))
+        print_rank_0(f'working on epoch {epoch} ...')
 
         # Set the data loader epoch to shuffle the index iterator.
         if mpu.get_model_parallel_rank() == 0:
@@ -225,10 +225,7 @@ def _train(model, optimizer, lr_scheduler, forward_step,
             start_iteration = 0
 
             # Train for one step.
-            if args.block_lm_ratio > 0.0:
-                data = (batch, train_dataloader[1])
-            else:
-                data = batch
+            data = (batch, train_dataloader[1]) if args.block_lm_ratio > 0.0 else batch
             lm_loss, skipped_iter, _ = train_step(data, model, optimizer, lr_scheduler, args,
                                                   timers, forward_step_func=forward_step, single_step=True)
             args.iteration += 1
@@ -248,7 +245,7 @@ def _train(model, optimizer, lr_scheduler, forward_step,
 
             # Evaluation
             if args.eval_interval and valid_dataloader is not None and args.iteration % args.eval_interval == 0:
-                prefix = 'iteration {}'.format(args.iteration)
+                prefix = f'iteration {args.iteration}'
                 evaluate_and_print_results(prefix, valid_dataloader, model, args, timers, step=args.iteration,
                                            verbose=False, forward_step_func=forward_step,
                                            summary_writer=summary_writer)
@@ -259,8 +256,9 @@ def _train(model, optimizer, lr_scheduler, forward_step,
 
         # Callback at the end of each epoch.
         if end_of_epoch_callback is not None and (epoch + 1) % args.eval_epoch == 0:
-            score_dict = end_of_epoch_callback(model, epoch, summary_writer=summary_writer)
-            if score_dict:
+            if score_dict := end_of_epoch_callback(
+                model, epoch, summary_writer=summary_writer
+            ):
                 validation_metric = args.validation_metric if args.validation_metric else list(score_dict.keys())[0]
                 validation_score = score_dict[validation_metric]
                 if best_iteration is None or validation_score > best_score:
@@ -308,10 +306,7 @@ def finetune(args, train_valid_datasets_provider, model_kwargs, forward_step=fin
             args.train_iters = args.epochs * args.train_iters_per_epoch
 
             train_dataloader = FakeDataloader(args.train_iters_per_epoch)
-            if args.no_validation:
-                valid_dataloader = None
-            else:
-                valid_dataloader = FakeDataloader(None)
+            valid_dataloader = None if args.no_validation else FakeDataloader(None)
         if args.block_lm_ratio > 0.0:
             if mpu.get_model_parallel_rank() == 0:
                 train_block_dataset, valid_block_dataset = train_valid_datasets_provider(args, tokenizer,
@@ -359,7 +354,7 @@ def finetune(args, train_valid_datasets_provider, model_kwargs, forward_step=fin
                     verbalizer = pvp.verbalize(label)[0]
                     verbalizer_ids = tokenizer.EncodeAsIds(verbalizer).tokenization
                     task_tokens += verbalizer_ids
-                print_rank_0("Task tokens: " + tokenizer.DecodeIds(task_tokens))
+                print_rank_0(f"Task tokens: {tokenizer.DecodeIds(task_tokens)}")
                 num_task_tokens = len(task_tokens)
             else:
                 num_task_tokens, task_tokens = 0, []
@@ -401,7 +396,9 @@ def finetune(args, train_valid_datasets_provider, model_kwargs, forward_step=fin
     if torch.distributed.get_rank() == 0:
         args.log_dir = get_log_dir(base=args.summary_dir, name=args.experiment_name)
         if os.path.exists(os.path.join(args.log_dir, "test_results.json")) and args.load is None and not args.overwrite:
-            raise ValueError("Output directory ({}) already exists and is not empty.".format(args.log_dir))
+            raise ValueError(
+                f"Output directory ({args.log_dir}) already exists and is not empty."
+            )
         summary_writer = get_sample_writer(log_dir=args.log_dir, iteration=args.iteration)
         print_and_save_args(args, verbose=True, log_dir=args.log_dir)
 
@@ -428,11 +425,9 @@ def finetune(args, train_valid_datasets_provider, model_kwargs, forward_step=fin
         torch.distributed.barrier()
         if end_of_train_callback is not None:
             score_dict = end_of_train_callback(model, epoch=-1, output_predictions=True)
-    # Or just evaluate.
-    else:
-        if end_of_train_callback is not None:
-            print_rank_0('evaluation only mode, setting epoch to -1')
-            score_dict = end_of_train_callback(model, epoch=-1, output_predictions=True)
+    elif end_of_train_callback is not None:
+        print_rank_0('evaluation only mode, setting epoch to -1')
+        score_dict = end_of_train_callback(model, epoch=-1, output_predictions=True)
     if score_dict is not None and torch.distributed.get_rank() == 0:
         score_dict.update({"type": "test"})
         with open(os.path.join(args.log_dir, "test_results.json"), "w") as output:
@@ -465,6 +460,6 @@ if __name__ == '__main__':
                                'squad_v1', 'xsum', 'extraction', 'cmrc', 'customization']:
         from tasks.seq2seq.finetune import main
     else:
-        raise NotImplementedError('Task {} is not implemented.'.format(args.task))
+        raise NotImplementedError(f'Task {args.task} is not implemented.')
 
     main(args)
